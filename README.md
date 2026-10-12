@@ -32,12 +32,14 @@
 
 ## 环境要求
 
-- PHP 7.4+（pdo_mysql、curl、gd、openssl、mysqli）
+- PHP 7.4+（pdo_mysql、mysqli、curl、gd、openssl）
 - MySQL 5.7+（utf8mb4）
-- Nginx + 宝塔面板（或任意可配 try_files 伪静态的环境）
-- 节点机：Ubuntu 20+ / Debian 11+，**KVM 虚拟化或独立服务器（x86_64）**——OpenVZ / LXC 等共享内核容器机不可用
+- Web 服务任选其一：
+  - **Linux**：Nginx + 宝塔面板（或任意可配 try_files 伪静态的环境）
+  - **Windows**：Windows Server 2016+ / IIS 10 + [URL Rewrite 模块 2.0](https://www.iis.net/downloads/microsoft/url-rewrite) + PHP（FastCGI，推荐 PHP Manager 注册）
+- 节点机（出售的主机所在服务器）：Ubuntu 20+ / Debian 11+，**KVM 虚拟化或独立服务器（x86_64）**——OpenVZ / LXC 等共享内核容器机不可用（节点程序为 Linux LXC；网站面板本身在 Windows 上运行不受影响）
 
-## 快速开始（宝塔面板）
+## 快速开始（宝塔面板 / Linux）
 
 1. 宝塔新建站点（PHP 7.4+）并创建数据库；
 2. 下载 [最新 Release](../../releases) 的压缩包上传到站点根目录解压（或 `git clone` 本仓库到站点根目录）；
@@ -56,6 +58,21 @@
 8. 套餐管理绑定节点后即可开售。
 
 详细说明见 [README_INSTALL.md](README_INSTALL.md)。
+
+## 快速开始（Windows Server 2016+ / IIS）
+
+1. **环境准备**：IIS 10（Server 2016 自带）；安装 [PHP 7.4+](https://windows.php.net/download/) 非 Thread Safe 或 Thread Safe 均可（用 PHP Manager 注册到 IIS）；安装 [URL Rewrite 模块 2.0](https://www.iis.net/downloads/microsoft/url-rewrite)；准备 MySQL 5.7+ 数据库；
+2. **部署**：解压程序到如 `C:\inetpub\wwwroot\natcloud`；IIS 站点**物理路径直接指向其中的 `public` 文件夹**（推荐，程序已自带 `public/web.config`）——若物理路径指向解压根目录，则使用根目录附带的 `web.config` 兼容配置；
+3. **权限**：给对应应用程序池身份（`IIS AppPool\站点名`）对程序根目录授予**修改**权限（安装时需写入 `.env` 与 `install.lock`）；
+4. **php.ini**：启用 `extension=pdo_mysql / mysqli / curl / gd / openssl`；
+5. 浏览器访问域名进入安装向导，向导提示会自动切换为 Windows/IIS 对应指引；
+6. **计划任务**：编辑 `cron\natcloud-tasks.bat` 里的 PHP 与程序路径后，以管理员身份运行一次即可注册两个计划任务（按量计费每分钟、流量重置每日 00:05）。
+
+## 赞助与支持
+
+- **赞助商**：[跨境VPS](https://www.kjvps.com) —— 感谢对本项目的大力支持 ❤
+- **在线演示站**：[nat.kjvps.com](https://nat.kjvps.com)
+- **官方交流 QQ 群**：[307386089](https://qm.qq.com/cgi-bin/qm/qr?group_code=307386089)
 
 ## 目录结构
 

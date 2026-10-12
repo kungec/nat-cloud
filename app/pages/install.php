@@ -67,6 +67,11 @@ function install_connect(array $in): PDO
 }
 
 /* ---------- environment checks ---------- */
+function install_is_windows(): bool
+{
+    return strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+}
+
 function install_requirements(): array
 {
     $root = NC_ROOT;
@@ -81,18 +86,23 @@ function install_requirements(): array
             @chmod($d, 0755);
         }
     }
+    $isWin = install_is_windows();
+    $hintDir = $isWin
+        ? 'IIS：在资源管理器中给站点对应的应用程序池身份（IIS AppPool\\站点名）对本目录授予“修改”权限'
+        : '宝塔：文件管理 → 站点根目录 → 权限 755，属主 www';
+    $hintExt = $isWin ? 'php.ini 启用对应 extension= 后重启 IIS 应用池' : '宝塔：软件商店 → 对应 PHP → 安装该扩展';
 
     return [
-        ['PHP ≥ 7.4（当前 ' . PHP_VERSION . '）', version_compare(PHP_VERSION, '7.4.0', '>='), '请升级 PHP 至 7.4 或以上（宝塔：软件商店 → PHP 切换版本）'],
-        ['PDO MySQL 扩展', extension_loaded('pdo_mysql'), '宝塔：软件商店 → 对应 PHP → 安装 pdo_mysql'],
-        ['MySQLi 扩展', extension_loaded('mysqli'), '宝塔：软件商店 → 对应 PHP → 安装 mysqli'],
-        ['cURL 扩展', extension_loaded('curl'), '宝塔：软件商店 → 对应 PHP → 安装 curl'],
-        ['GD 扩展（图形验证码）', extension_loaded('gd'), '宝塔：软件商店 → 对应 PHP → 安装 gd'],
-        ['OpenSSL 扩展（数据加密）', extension_loaded('openssl'), '宝塔：软件商店 → 对应 PHP → 安装 openssl'],
-        ['Session 可用', session_status() === PHP_SESSION_ACTIVE, '检查 php.ini 的 session 配置'],
-        ['根目录可写（写入 .env）', is_writable($root), '宝塔：文件管理 → 站点根目录 → 权限 755，属主 www'],
-        ['install 目录可写（写入安装锁）', is_writable($root . '/install'), '宝塔：文件管理 → install 目录 → 权限 755，属主 www'],
-        ['storage 目录可写（工单临时文件）', is_writable($root . '/storage/tmp'), '宝塔：文件管理 → storage 目录 → 权限 755，属主 www'],
+        ['PHP ≥ 7.4（当前 ' . PHP_VERSION . '）', version_compare(PHP_VERSION, '7.4.0', '>='), $isWin ? '安装 PHP 7.4+ 并在 IIS 中注册 FastCGI（PHP Manager）' : '请升级 PHP 至 7.4 或以上（宝塔：软件商店 → PHP 切换版本）'],
+        ['PDO MySQL 扩展', extension_loaded('pdo_mysql'), $hintExt],
+        ['MySQLi 扩展', extension_loaded('mysqli'), $hintExt],
+        ['cURL 扩展', extension_loaded('curl'), $hintExt],
+        ['GD 扩展（图形验证码）', extension_loaded('gd'), $hintExt],
+        ['OpenSSL 扩展（数据加密）', extension_loaded('openssl'), $hintExt],
+        ['Session 可用', session_status() === PHP_SESSION_ACTIVE, '检查 php.ini 的 session 配置' . ($isWin ? '（Windows 需保证 session.save_path 可写）' : '')],
+        ['根目录可写（写入 .env）', is_writable($root), $hintDir],
+        ['install 目录可写（写入安装锁）', is_writable($root . '/install'), $hintDir],
+        ['storage 目录可写（工单临时文件）', is_writable($root . '/storage/tmp'), $hintDir],
     ];
 }
 
@@ -111,6 +121,7 @@ function install_render_check(string $err = '', array $old = []): void
 {
     $rows = install_requirements();
     $allOk = install_all_pass($rows);
+    $isWin = install_is_windows();
     $token = csrf_token();
     $oldEsc = function (string $k) use ($old): string {
         return e((string) ($old[$k] ?? ''));
@@ -157,10 +168,18 @@ function install_render_check(string $err = '', array $old = []): void
     <?php endforeach; ?>
 
     <h3 style="font-size:15px;margin:20px 0 12px;">Web 配置探测</h3>
-    <div class="ins-row"><span>伪静态路由（try_files）</span><span class="st" id="stRewrite">检测中…</span></div>
+    <div class="ins-row"><span>伪静态路由（nginx try_files / IIS URL Rewrite）</span><span class="st" id="stRewrite">检测中…</span></div>
+    <?php if ($isWin): ?>
+    <div class="ins-hint" id="hintRewrite" style="display:none;">检测失败：IIS 需安装 <b>URL Rewrite 模块 2.0</b>；程序已自带 web.config 伪静态规则（public/ 与解压根目录各一份），确认站点加载后刷新本页。</div>
+    <?php else: ?>
     <div class="ins-hint" id="hintRewrite" style="display:none;">检测失败：请在宝塔「网站 → 设置 → 伪静态」中添加以下配置后刷新本页——<pre class="ins-code">location / { try_files $uri $uri/ /index.php?$query_string; }</pre></div>
+    <?php endif; ?>
     <div class="ins-row"><span>运行目录 /public（网站目录）</span><span class="st" id="stRun">检测中…</span></div>
+    <?php if ($isWin): ?>
+    <div class="ins-hint" id="hintRun" style="display:none;">检测失败：推荐将 IIS 站点的<b>物理路径直接指向解压后的 public 文件夹</b>；若指向解压根目录，请改用根目录自带的 web.config 兼容配置。</div>
+    <?php else: ?>
     <div class="ins-hint" id="hintRun" style="display:none;">检测失败：请在宝塔「网站 → 设置 → 网站目录」把运行目录设置为 <b>/public</b> 并保存后刷新本页。</div>
+    <?php endif; ?>
 
     <h3 style="font-size:15px;margin:20px 0 12px;">数据库与管理员</h3>
     <div class="ins-hint" style="margin-bottom:12px;">请先在宝塔「数据库」页面创建数据库（或使用已有数据库），再填写下方信息。</div>
