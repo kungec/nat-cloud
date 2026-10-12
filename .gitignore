@@ -1,0 +1,11 @@
+# 运行时敏感文件
+.env
+install.lock
+storage/
+*.log
+
+# IDE / 系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

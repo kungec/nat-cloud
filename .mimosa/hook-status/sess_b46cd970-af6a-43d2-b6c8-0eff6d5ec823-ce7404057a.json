@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-10-12T08:03:46.574Z",
+  "sessionId": "sess_b46cd970-af6a-43d2-b6c8-0eff6d5ec823",
+  "event": "PostToolUse",
+  "toolName": "Write",
+  "file": "D:\\跨境NAT\\push_github.py",
+  "outcome": "inconclusive",
+  "coverage": "partial",
+  "findingCount": 0,
+  "durationMs": 8,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}
