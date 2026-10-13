@@ -34,6 +34,7 @@
     <a class="<?= $cur === '/admin/transactions' ? ' on' : '' ?>" href="/admin/transactions">流水</a>
     <a class="<?= strpos($cur, '/admin/tickets') === 0 ? ' on' : '' ?>" href="/admin/tickets">工单</a>
     <a class="<?= strpos($cur, '/admin/news') === 0 ? ' on' : '' ?>" href="/admin/news">公告</a>
+    <a class="<?= strpos($cur, '/admin/coupons') === 0 ? 'on' : '' ?>" href="/admin/coupons">优惠码</a>
     <a class="<?= strpos($cur, '/admin/kyc') === 0 ? ' on' : '' ?>" href="/admin/kyc">实名审核</a>
     <a class="<?= strpos($cur, '/admin/settings') === 0 ? ' on' : '' ?>" href="/admin/settings">系统设置</a>
   </div>
@@ -50,6 +51,7 @@
       <a class="<?= $cur === '/admin/transactions' ? ' on' : '' ?>" href="/admin/transactions"><span class="ico"><?= nc_icon('receipt') ?></span>流水</a>
       <a class="<?= strpos($cur, '/admin/tickets') === 0 ? ' on' : '' ?>" href="/admin/tickets"><span class="ico"><?= nc_icon('headset') ?></span>工单</a>
       <a class="<?= strpos($cur, '/admin/news') === 0 ? ' on' : '' ?>" href="/admin/news"><span class="ico"><?= nc_icon('megaphone') ?></span>公告</a>
+      <a class="<?= strpos($cur, '/admin/coupons') === 0 ? 'on' : '' ?>" href="/admin/coupons"><span class="ico"><?= nc_icon('receipt') ?></span>优惠码</a>
       <a class="<?= strpos($cur, '/admin/kyc') === 0 ? ' on' : '' ?>" href="/admin/kyc"><span class="ico"><?= nc_icon('shield') ?></span>实名审核</a>
       <a class="<?= strpos($cur, '/admin/settings') === 0 ? ' on' : '' ?>" href="/admin/settings"><span class="ico"><?= nc_icon('gear') ?></span>系统设置</a>
     </nav>

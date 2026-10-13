@@ -113,6 +113,8 @@ require __DIR__ . '/kyc/KycProviders.php';
 require __DIR__ . '/pay/WxOfficial.php';
 require __DIR__ . '/usdt.php';
 require __DIR__ . '/mail.php';
+require __DIR__ . '/coupons.php';
+require __DIR__ . '/telegram.php';
 require __DIR__ . '/billing.php';
 require __DIR__ . '/router.php';
 

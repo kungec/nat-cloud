@@ -472,7 +472,7 @@ function node_allocate_slot(int $nodeId): ?array
  * 开通节点实例（套餐绑定节点，全自动真实开通）。
  * 成功后实例处于 creating 状态，节点回报后转 running。
  */
-function billing_create_node_instance(array $user, array $plan, string $img, string $mode, string $cycle = 'monthly'): array
+function billing_create_node_instance(array $user, array $plan, string $img, string $mode, string $cycle = 'monthly', string $couponCode = ''): array
 {
     billing_ensure_pricing_columns();
     $uid = (int) $user['id'];
@@ -516,8 +516,19 @@ function billing_create_node_instance(array $user, array $plan, string $img, str
 
         $charge = 0.0;
         $expire = null;
+        $coupon = null;
+        $couponDiscount = 0.0;
         if ($mode === 'monthly') {
             $charge = billing_cycle_price($plan, $cycle);
+            if ($couponCode !== '') {
+                $coupon = coupon_find($couponCode);
+                [$cok, $cmsg, $couponDiscount] = coupon_validate($coupon, $uid, $charge);
+                if (!$cok) {
+                    db()->rollBack();
+                    return ['ok' => false, 'msg' => '优惠码不可用：' . $cmsg];
+                }
+                $charge = max(0.0, round($charge - $couponDiscount, 2));
+            }
             if ($balance < $charge) {
                 db()->rollBack();
                 return ['ok' => false, 'msg' => '余额不足，请先充值。本次需 ' . money($charge) . ' 元。'];
@@ -573,8 +584,15 @@ function billing_create_node_instance(array $user, array $plan, string $img, str
         node_enqueue((int) $node['id'], 'create', $payload);
 
         $orderTitle = sprintf('%s（%s）', $plan['name'], $name);
+        if ($coupon !== null && $couponDiscount > 0) {
+            $orderTitle .= sprintf('（优惠码 %s 已抵扣 %s 元）', $coupon['code'], money($couponDiscount));
+        }
         $oins = db()->prepare('INSERT INTO orders (order_no, uid, instance_id, type, title, months, amount, status, created_at, paid_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())');
         $oins->execute([random_order_no(), $uid, $instanceId, $mode === 'monthly' ? 'new' : 'new_hourly', $orderTitle, $mode === 'monthly' ? $months : 0, $charge, 'paid']);
+
+        if ($coupon !== null && $couponDiscount > 0) {
+            coupon_redeem($coupon, $uid, '', $couponDiscount);
+        }
 
         if ($charge > 0) {
             $tins = db()->prepare("INSERT INTO transactions (uid, type, amount, balance_after, remark, created_at) VALUES (?, 'monthly', ?, ?, ?, NOW())");
@@ -618,7 +636,7 @@ function node_lifecycle_on_delete(array $inst): void
 /**
  * 续费（包年包月）：从余额扣对应月数费用，延长到期时间。
  */
-function billing_renew_instance(array $user, array $inst, string $cycle = 'monthly'): array
+function billing_renew_instance(array $user, array $inst, string $cycle = 'monthly', string $couponCode = ''): array
 {
     if ($inst['billing_mode'] !== 'monthly') {
         return ['ok' => false, 'msg' => '按量计费实例无需续费，保持余额充足即可。'];
@@ -642,17 +660,29 @@ function billing_renew_instance(array $user, array $inst, string $cycle = 'month
     }
     $uid = (int) $user['id'];
 
+    /* 优惠码校验（核销在订单事务内进行） */
+    $coupon = null;
+    $couponDiscount = 0.0;
+    if ($couponCode !== '') {
+        $coupon = coupon_find($couponCode);
+        [$cok, $cmsg, $couponDiscount] = coupon_validate($coupon, $uid, $charge);
+        if (!$cok) {
+            return ['ok' => false, 'msg' => '优惠码不可用：' . $cmsg];
+        }
+    }
+    $payable = max(0.0, round($charge - $couponDiscount, 2));
+
     db()->beginTransaction();
     try {
         $stmt = db()->prepare('SELECT balance FROM users WHERE id = ? FOR UPDATE');
         $stmt->execute([$uid]);
         $balance = (float) $stmt->fetchColumn();
-        if ($balance < $charge) {
+        if ($balance < $payable) {
             db()->rollBack();
-            return ['ok' => false, 'msg' => '余额不足，请先充值。本次需 ' . money($charge) . ' 元。'];
+            return ['ok' => false, 'msg' => '余额不足，请先充值。本次需 ' . money($payable) . ' 元。'];
         }
         $upd = db()->prepare('UPDATE users SET balance = balance - ? WHERE id = ?');
-        $upd->execute([$charge, $uid]);
+        $upd->execute([$payable, $uid]);
         $stmt = db()->prepare('SELECT balance FROM users WHERE id = ?');
         $stmt->execute([$uid]);
         $after = (float) $stmt->fetchColumn();
@@ -663,13 +693,23 @@ function billing_renew_instance(array $user, array $inst, string $cycle = 'month
         $upd->execute([$newExpire, $cycle, $inst['id']]);
         node_lifecycle_on_renew($inst);
 
+        $orderTitle = sprintf('实例 %s 续费 %d 个月', $inst['name'], $months);
+        if ($coupon !== null && $couponDiscount > 0) {
+            $orderTitle .= sprintf('（优惠码 %s 已抵扣 %s 元）', $coupon['code'], money($couponDiscount));
+        }
+        $orderNo = random_order_no();
         $oins = db()->prepare("INSERT INTO orders (order_no, uid, instance_id, type, title, months, amount, status, created_at, paid_at) VALUES (?, ?, ?, 'renew', ?, ?, ?, 'paid', NOW(), NOW())");
-        $oins->execute([random_order_no(), $uid, $inst['id'], sprintf('实例 %s 续费 %d 个月', $inst['name'], $months), $months, $charge]);
+        $oins->execute([$orderNo, $uid, $inst['id'], $orderTitle, $months, $payable]);
 
         $tins = db()->prepare("INSERT INTO transactions (uid, type, amount, balance_after, remark, created_at) VALUES (?, 'monthly', ?, ?, ?, NOW())");
-        $tins->execute([$uid, -$charge, $after, sprintf('实例 %s 续费 %d 个月', $inst['name'], $months)]);
+        $tins->execute([$uid, -$payable, $after, $orderTitle]);
+
+        if ($coupon !== null && $couponDiscount > 0) {
+            coupon_redeem($coupon, $uid, $orderNo, $couponDiscount);
+        }
 
         db()->commit();
+        tg_notify_user($uid, "✅ 实例 {$inst['name']} 续费成功，扣费 ¥" . money($payable) . "，新到期时间 {$newExpire}。");
         return ['ok' => true, 'msg' => '续费成功，新到期时间 ' . $newExpire];
     } catch (Throwable $e) {
         if (db()->inTransaction()) {
@@ -723,6 +763,7 @@ function billing_auto_renew_try(array $inst): bool
     if (smtp_ready() && filter_var((string) $user['email'], FILTER_VALIDATE_EMAIL)) {
         mail_send_autorenew((string) $user['email'], (string) $user['username'], (string) $inst['name'], (float) $charge, (string) $re['msg']);
     }
+    tg_notify_user((int) $inst['uid'], "✅ 实例 {$inst['name']} 已自动续费，扣费 ¥" . money($charge) . "，{$re['msg']}");
     return true;
 }
 
@@ -752,6 +793,7 @@ function billing_send_expiry_reminders(): int
         }
         $link = codepay_site_base() . '/dashboard/services';
         [$ok] = mail_send_expiry((string) $r['email'], (string) $r['username'], (string) $r['name'], (string) $r['expire_at'], $days, $link);
+        tg_notify_user((int) $r['uid'], "⏰ 实例 {$r['name']} 将于 {$r['expire_at']} 到期（剩余约 {$days} 天），请及时续费，避免服务中断。");
         if ($ok) {
             $upd = db()->prepare('UPDATE instances SET remind_level = ? WHERE id = ?');
             $upd->execute([$level, (int) $r['id']]);

@@ -209,6 +209,7 @@ $released = $inst['status'] === 'released';
             <option value="semiannually">半年付</option>
             <option value="annually">年付</option>
           </select>
+          <input class="input" type="text" name="coupon" maxlength="32" placeholder="优惠码" style="width:96px;" autocomplete="off" <?= $dis ?>>
           <button class="btn btn-primary btn-sm" type="submit" <?= $dis ?>>续费</button>
         </form>
       </div>

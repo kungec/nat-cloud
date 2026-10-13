@@ -168,6 +168,10 @@ function plan_ram_txt($mb) { return (int) $mb >= 1024 ? (round($mb / 1024 * 10) 
           </select>
           <div id="planCycleHourly" style="display:none;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-dim);font-size:13.5px;">按小时计费 · 随开随停，停机不扣费</div>
         </div>
+        <div class="field" style="margin-top:6px;">
+          <label>优惠码（可选，仅包年包月可用）</label>
+          <input class="input" type="text" name="coupon" maxlength="32" placeholder="有优惠码请在此输入" autocomplete="off">
+        </div>
         <div class="sum-row" style="border-bottom:0;"><span>当前余额</span><span>¥<?= e(money($u['balance'])) ?></span></div>
         <div class="pay-box">
           <span class="l">应付<b id="payPlanMonths">1 个月</b></span>

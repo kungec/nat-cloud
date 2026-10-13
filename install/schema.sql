@@ -20,6 +20,33 @@ CREATE TABLE IF NOT EXISTS `auth_failures` (
   KEY `idx_af` (`account`,`ip`,`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS `coupons` (
+  `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `code` varchar(32) NOT NULL,
+  `type` varchar(10) NOT NULL DEFAULT 'percent',
+  `value` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `min_amount` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `quota` int(11) NOT NULL DEFAULT 1,
+  `used` int(11) NOT NULL DEFAULT 0,
+  `expires_at` datetime DEFAULT NULL,
+  `status` tinyint(4) NOT NULL DEFAULT 1,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `coupon_redemptions` (
+  `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `coupon_id` int(10) unsigned NOT NULL,
+  `uid` int(10) unsigned NOT NULL,
+  `order_no` varchar(32) NOT NULL DEFAULT '',
+  `discount` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cr` (`coupon_id`,`uid`),
+  KEY `idx_cr_coupon` (`coupon_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS `email_verifies` (
   `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
   `uid` int(10) unsigned NOT NULL,

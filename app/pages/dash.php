@@ -292,7 +292,7 @@ function dash_handle(string $path, string $method): void
             $r = billing_instance_rebuild($inst, $img);
             flash($r['ok'] ? 'ok' : 'err', $r['msg']);
         } elseif ($action === 'renew') {
-            $result = billing_renew_instance($user, $inst, post_str('cycle', 12));
+            $result = billing_renew_instance($user, $inst, post_str('cycle', 12), post_str('coupon', 32));
             flash($result['ok'] ? 'ok' : 'err', $result['msg']);
         } else {
             flash('err', '当前状态无法执行该操作。');
@@ -382,7 +382,7 @@ function dash_handle(string $path, string $method): void
             if (!in_array($cycle, ['monthly', 'quarterly', 'semiannually', 'annually'], true)) {
                 $cycle = 'monthly';
             }
-            $result = billing_create_node_instance($user, $plan, $img, $mode, $cycle);
+            $result = billing_create_node_instance($user, $plan, $img, $mode, $cycle, post_str('coupon', 32));
             if (!$result['ok']) {
                 $createErr($result['msg']);
             }
@@ -901,6 +901,19 @@ function dash_handle(string $path, string $method): void
         auth_logout(NC_AUTH_COOKIE, 0);
         flash('ok', '已退出所有设备。');
         respond(view('auth/login', ['title' => '登录', 'old' => []]));
+    }
+    if ($path === '/dashboard/settings/tg-bind' && $method === 'POST') {
+        csrf_check();
+        tg_bind_code($uid);
+        flash('ok', '绑定码已生成，请按页面提示向 bot 发送完成绑定。');
+        $settingsView();
+    }
+    if ($path === '/dashboard/settings/tg-unbind' && $method === 'POST') {
+        csrf_check();
+        $upd = db()->prepare('UPDATE users SET tg_chat_id = NULL, tg_bind_code = NULL WHERE id = ?');
+        $upd->execute([$uid]);
+        flash('ok', '已解除 Telegram 绑定。');
+        $settingsView();
     }
     if (preg_match('~^/dashboard/settings/sessions/(\d+)/kill$~', $path, $m) && $method === 'POST') {
         csrf_check();

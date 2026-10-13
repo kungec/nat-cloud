@@ -48,6 +48,15 @@ try {
 }
 echo '[' . date('Y-m-d H:i:s') . '] expiry_reminded=' . $reminded . "\n";
 
+/* Telegram 绑定码轮询（用户向 bot 发送 /start 绑定码 后自动完成绑定） */
+$tgBound = 0;
+try {
+    $tgBound = tg_poll_bindings();
+} catch (Throwable $e) {
+    $tgBound = -1;
+}
+echo '[' . date('Y-m-d H:i:s') . '] tg_bound=' . $tgBound . "\n";
+
 /* USDT(TRC20) 充值单兜底核对：轮询公链自动入账，超时未支付自动关闭 */
 $usdtDone = 0;
 try {

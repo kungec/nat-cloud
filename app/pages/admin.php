@@ -1027,6 +1027,7 @@ function admin_handle(string $path, string $method): void
                     if ($mu && filter_var((string) $mu['email'], FILTER_VALIDATE_EMAIL)) {
                         mail_send_ticket_reply((string) $mu['email'], (string) $mu['username'], (int) $ticket['id'], (string) $ticket['title']);
                     }
+                    tg_notify_user((int) $ticket['uid'], "💬 工单 #{$ticket['id']} {$ticket['title']} 有新的客服回复，请登录控制台查看。");
                 }
             } catch (Throwable $e) {
                 /* 通知失败静默 */
@@ -1039,6 +1040,57 @@ function admin_handle(string $path, string $method): void
         $stmt = db()->prepare('SELECT t.*, u.username, u.email FROM tickets t LEFT JOIN users u ON u.id = t.uid WHERE t.id = ? LIMIT 1');
         $stmt->execute([$ticket['id']]);
         respond(view('admin/ticket_detail', ['title' => '工单 #' . $ticket['id'], 'ticket' => $stmt->fetch(), 'replies' => $replies]));
+    }
+
+    /* ---------- 优惠码管理 ---------- */
+    if ($path === '/admin/coupons' && $method === 'GET') {
+        coupon_ensure_tables();
+        $rows = db_all('SELECT * FROM coupons ORDER BY id DESC LIMIT 200');
+        respond(view('admin/coupons', ['title' => '优惠码管理', 'rows' => $rows]));
+    }
+    if ($path === '/admin/coupons/create' && $method === 'POST') {
+        csrf_check();
+        $code = strtoupper(trim(post_str('code', 32)));
+        $type = post_str('type', 10) === 'fixed' ? 'fixed' : 'percent';
+        $value = round((float) post_str('value', 12), 2);
+        $minAmount = round((float) post_str('min_amount', 12), 2);
+        $quota = max(1, (int) post_str('quota', 9));
+        $expires = trim(post_str('expires_at', 19));
+        if (!preg_match('~^[A-Z0-9]{3,32}$~', $code)) {
+            flash('err', '优惠码需为 3-32 位大写字母 / 数字。');
+            respond(view('admin/coupons', ['title' => '优惠码管理', 'rows' => db_all('SELECT * FROM coupons ORDER BY id DESC LIMIT 200')]));
+        }
+        if ($value <= 0 || ($type === 'percent' && $value > 99)) {
+            flash('err', '折扣值不合法（百分比 1-99，立减为大于 0 的金额）。');
+            respond(view('admin/coupons', ['title' => '优惠码管理', 'rows' => db_all('SELECT * FROM coupons ORDER BY id DESC LIMIT 200')]));
+        }
+        coupon_ensure_tables();
+        try {
+            $ins = db()->prepare('INSERT INTO coupons (code, type, value, min_amount, quota, expires_at, status) VALUES (?, ?, ?, ?, ?, ?, 1)');
+            $ins->execute([$code, $type, $value, $minAmount, $quota, $expires !== '' ? $expires : null]);
+            flash('ok', '优惠码 ' . $code . ' 已创建。');
+        } catch (PDOException $e) {
+            flash('err', strpos($e->getMessage(), 'Duplicate') !== false ? '优惠码已存在。' : '创建失败：' . $e->getMessage());
+        }
+        respond(view('admin/coupons', ['title' => '优惠码管理', 'rows' => db_all('SELECT * FROM coupons ORDER BY id DESC LIMIT 200')]));
+    }
+    if (preg_match('~^/admin/coupons/(\d+)/toggle$~', $path, $m) && $method === 'POST') {
+        csrf_check();
+        coupon_ensure_tables();
+        $upd = db()->prepare('UPDATE coupons SET status = IF(status = 1, 0, 1) WHERE id = ?');
+        $upd->execute([(int) $m[1]]);
+        flash('ok', '状态已切换。');
+        respond(view('admin/coupons', ['title' => '优惠码管理', 'rows' => db_all('SELECT * FROM coupons ORDER BY id DESC LIMIT 200')]));
+    }
+    if (preg_match('~^/admin/coupons/(\d+)/delete$~', $path, $m) && $method === 'POST') {
+        csrf_check();
+        coupon_ensure_tables();
+        $del = db()->prepare('DELETE FROM coupons WHERE id = ?');
+        $del->execute([(int) $m[1]]);
+        $del = db()->prepare('DELETE FROM coupon_redemptions WHERE coupon_id = ?');
+        $del->execute([(int) $m[1]]);
+        flash('ok', '优惠码已删除。');
+        respond(view('admin/coupons', ['title' => '优惠码管理', 'rows' => db_all('SELECT * FROM coupons ORDER BY id DESC LIMIT 200')]));
     }
 
     /* ---------- 公告管理 ---------- */
@@ -1230,6 +1282,8 @@ function admin_handle(string $path, string $method): void
             'auto_renew_enabled' => post_str('auto_renew_enabled') === '0' ? '0' : '1',
             'tos_html' => post_str('tos_html', 20000),
             'privacy_html' => post_str('privacy_html', 20000),
+            'tg_enabled' => post_str('tg_enabled') === '1' ? '1' : '0',
+            'tg_bot_token' => trim(post_str('tg_bot_token', 120)) !== '' ? secret_encrypt(trim(post_str('tg_bot_token', 120))) : trim(setting('tg_bot_token', '')),
         ];
         foreach ($keys as $k => $v) {
             try {

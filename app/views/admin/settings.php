@@ -11,6 +11,7 @@
       <button type="button" data-tab="wx">微信官方</button>
       <button type="button" data-tab="kyc">实名认证</button>
       <button type="button" data-tab="usdt">USDT 支付</button>
+      <button type="button" data-tab="tg">Telegram</button>
     </div>
 
     <div class="set-panel on" data-panel="base">
@@ -292,6 +293,23 @@
         sync();
       })();
       </script>
+    </div>
+
+    <div class="set-panel" data-panel="tg">
+      <p class="desc" style="font-size:13px;margin-top:0;">在 Telegram 找 @BotFather 创建机器人后，把 token 粘贴到下面并启用。用户在控制台「账号与安全」获取绑定码，向机器人发送 <code>/start 绑定码</code> 完成绑定；之后实例开通、续费、到期提醒与工单回复会自动推送。</p>
+      <div class="grid grid-2">
+        <div class="field">
+          <label>启用 Telegram 通知</label>
+          <select class="input" name="tg_enabled">
+            <option value="1" <?= setting('tg_enabled', '0') === '1' ? 'selected' : '' ?>>开启</option>
+            <option value="0" <?= setting('tg_enabled', '0') !== '1' ? 'selected' : '' ?>>关闭</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Bot Token（@BotFather 发放，加密存储）</label>
+          <input class="input" type="text" name="tg_bot_token" value="" placeholder="<?= setting('tg_bot_token', '') !== '' ? '已保存（加密存储）——留空保持不变' : '如 123456789:AAxxxx...' ?>" maxlength="120">
+        </div>
+      </div>
     </div>
 
     <div class="set-panel" data-panel="usdt">

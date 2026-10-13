@@ -32,6 +32,29 @@ $contentWrapClass = 'settings-col';
     </div>
 
     <hr style="margin:24px 0 18px;">
+    <div style="font-size:14.5px;font-weight:600;margin-bottom:12px;">Telegram 通知</div>
+    <?php $tgReady = function_exists('tg_ready') && tg_ready(); ?>
+    <?php $tgBound = isset($u['tg_chat_id']) && $u['tg_chat_id'] !== null && $u['tg_chat_id'] !== ''; ?>
+    <?php if (!$tgReady && !$tgBound): ?>
+      <div style="font-size:13.5px;color:var(--text-dim);">管理员尚未配置 Telegram 机器人。</div>
+    <?php elseif ($tgBound): ?>
+      <div style="font-size:13.5px;color:var(--text-dim);">✅ 已绑定。实例开通 / 续费 / 到期提醒 / 工单回复将推送到你的 Telegram。</div>
+      <form method="post" action="/dashboard/settings/tg-unbind" style="margin-top:10px;">
+        <?= csrf_field() ?>
+        <button class="btn btn-ghost btn-sm" type="submit">解除绑定</button>
+      </form>
+    <?php else: ?>
+      <?php $tgCode = tg_bind_code((int) $u['id']); ?>
+      <div style="font-size:13.5px;color:var(--text-dim);line-height:1.9;">未绑定。绑定后可接收实例开通 / 续费 / 到期提醒 / 工单回复通知：<br>
+        1. 在 Telegram 打开站点机器人；<br>
+        2. 发送：<b>/start <?= e($tgCode) ?></b></div>
+      <form method="post" action="/dashboard/settings/tg-bind" style="margin-top:10px;">
+        <?= csrf_field() ?>
+        <button class="btn btn-ghost btn-sm" type="submit">重新生成绑定码</button>
+      </form>
+    <?php endif; ?>
+
+    <hr style="margin:24px 0 18px;">
     <div style="font-size:14.5px;font-weight:600;margin-bottom:12px;">修改密码</div>
     <form method="post" action="/dashboard/settings/password">
       <?= csrf_field() ?>
