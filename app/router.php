@@ -61,6 +61,12 @@ function route_dispatch(string $uri, string $method): void
         news_handle($path, $method);
     }
 
+    /* 公开静态页：服务状态 / 服务条款 / 隐私政策 */
+    if ($path === '/status' || $path === '/terms' || $path === '/privacy') {
+        require NC_ROOT . '/app/pages/public.php';
+        page_static_handle($path);
+    }
+
     if ($path === '/api/price') {
         require NC_ROOT . '/app/pages/api.php';
         api_price();

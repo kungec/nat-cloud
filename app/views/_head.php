@@ -36,6 +36,7 @@ $assetV = function (string $rel): string {
       <a href="/#pricing">套餐</a>
       <a href="/#faq">常见问题</a>
       <a href="/news">公告</a>
+      <a href="/status">状态</a>
     </div>
     <div class="topnav-actions">
       <div class="user-menu" style="margin-right:4px;">
@@ -82,6 +83,7 @@ $assetV = function (string $rel): string {
     <a href="/#pricing">套餐</a>
     <a href="/#faq">常见问题</a>
     <a href="/news">公告</a>
+    <a href="/status">状态</a>
     <?php if (empty($u)): ?>
     <div class="mobile-auth-row">
       <a class="btn btn-ghost btn-sm" style="flex:1;" href="/auth/login">登录</a>

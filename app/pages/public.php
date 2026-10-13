@@ -1,7 +1,37 @@
 <?php
 declare(strict_types=1);
 
-/* NAT Cloud - 公开页面：首页 / 新闻公告 */
+/* NAT Cloud - 公开页面：首页 / 新闻公告 / 服务状态 / 条款与隐私 */
+
+function page_static_handle(string $path): void
+{
+    if ($path === '/status') {
+        try {
+            db_exec('ALTER TABLE nodes ADD COLUMN last_seen DATETIME NULL');
+        } catch (Throwable $e) {
+            /* 列已存在 */
+        }
+        $nodes = [];
+        foreach (db_all('SELECT id, name, status, last_seen FROM nodes ORDER BY sort ASC, id ASC') as $n) {
+            $seen = $n['last_seen'] ? strtotime((string) $n['last_seen']) : 0;
+            $online = (int) $n['status'] === 1 && $seen > time() - 300;
+            $nodes[] = [
+                'name' => (string) $n['name'],
+                'enabled' => (int) $n['status'] === 1,
+                'online' => $online,
+                'last_seen' => $n['last_seen'] ?: '',
+            ];
+        }
+        $news = db_all('SELECT id, title, created_at FROM news WHERE status = 1 ORDER BY id DESC LIMIT 5');
+        respond(view('status', ['title' => '服务状态 · ' . setting('site_name', 'NAT Cloud'), 'nodes' => $nodes, 'news' => $news]));
+    }
+    if ($path === '/terms' || $path === '/privacy') {
+        $isTerms = $path === '/terms';
+        $html = setting($isTerms ? 'tos_html' : 'privacy_html', '');
+        $title = $isTerms ? '服务条款' : '隐私政策';
+        respond(view('page_html', ['title' => $title . ' · ' . setting('site_name', 'NAT Cloud'), 'pageTitle' => $title, 'html' => $html]));
+    }
+}
 
 function page_home(): void
 {

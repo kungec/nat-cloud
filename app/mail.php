@@ -224,3 +224,46 @@ function mail_send_reset(string $to, string $username, string $link): array
         . '</div>';
     return mail_send($to, $site . ' 密码重置（30 分钟内有效）', $html);
 }
+
+/** 实例到期提醒邮件（到期前 7/3/1 天） */
+function mail_send_expiry(string $to, string $username, string $instName, string $expire, int $days, string $link): array
+{
+    $site = setting('site_name', 'NAT Cloud');
+    $html = '<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;">'
+        . '<h2 style="color:#111;">实例到期提醒</h2>'
+        . '<p>你好 <b>' . e($username) . '</b>，你的实例 <b>' . e($instName) . '</b> 将于 <b>' . e($expire) . '</b> 到期（剩余约 ' . (int) $days . ' 天）。</p>'
+        . '<p>到期后实例将停机，超过宽限期未续费将被释放回收，数据无法找回。可登录控制台续费：</p>'
+        . '<p><a href="' . $link . '">' . $link . '</a></p>'
+        . '<p style="color:#888;font-size:12px;">开启余额自动续费后，只要账户余额充足即可自动续期，无需手动操作。</p>'
+        . '</div>';
+    return mail_send($to, $site . ' 实例到期提醒（剩余 ' . (int) $days . ' 天）', $html);
+}
+
+/** 余额自动续费成功回执 */
+function mail_send_autorenew(string $to, string $username, string $instName, float $charge, string $resultMsg): array
+{
+    $site = setting('site_name', 'NAT Cloud');
+    $html = '<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;">'
+        . '<h2 style="color:#111;">自动续费成功</h2>'
+        . '<p>你好 <b>' . e($username) . '</b>，你的实例 <b>' . e($instName) . '</b> 已自动续费。</p>'
+        . '<p>本次扣费 <b>¥' . e(money($charge)) . '</b>（从账户余额代扣），' . e($resultMsg) . '。实例保持正常运行，无需任何操作。</p>'
+        . '<p><a href="' . codepay_site_base() . '/dashboard/services">在控制台查看实例</a></p>'
+        . '<p style="color:#888;font-size:12px;">本邮件由系统自动发送。如需关闭自动续费请联系管理员。</p>'
+        . '</div>';
+    return mail_send($to, $site . ' 实例自动续费成功', $html);
+}
+
+/** 工单新回复通知（管理员回复后发给工单所有者） */
+function mail_send_ticket_reply(string $to, string $username, int $ticketId, string $ticketTitle): array
+{
+    $site = setting('site_name', 'NAT Cloud');
+    $link = codepay_site_base() . '/dashboard/tickets/' . (int) $ticketId;
+    $html = '<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;">'
+        . '<h2 style="color:#111;">工单新回复</h2>'
+        . '<p>你好 <b>' . e($username) . '</b>，你的工单 <b>#' . (int) $ticketId . ' ' . e($ticketTitle) . '</b> 有新的客服回复。</p>'
+        . '<p>请登录控制台查看详情并继续沟通：</p>'
+        . '<p><a href="' . $link . '">' . $link . '</a></p>'
+        . '<p style="color:#888;font-size:12px;">本邮件由系统自动发送，请勿直接回复。</p>'
+        . '</div>';
+    return mail_send($to, $site . ' 工单 #' . (int) $ticketId . ' 有新回复', $html);
+}

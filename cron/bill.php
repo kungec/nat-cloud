@@ -39,6 +39,15 @@ try {
 }
 echo '[' . date('Y-m-d H:i:s') . '] traffic_stopped=' . $trafficStopped . "\n";
 
+/* 到期邮件提醒：包月运行中实例到期前 7/3/1 天各发一封（余额自动续费在 billing_run_all 内完成） */
+$reminded = 0;
+try {
+    $reminded = billing_send_expiry_reminders();
+} catch (Throwable $e) {
+    $reminded = -1;
+}
+echo '[' . date('Y-m-d H:i:s') . '] expiry_reminded=' . $reminded . "\n";
+
 /* USDT(TRC20) 充值单兜底核对：轮询公链自动入账，超时未支付自动关闭 */
 $usdtDone = 0;
 try {

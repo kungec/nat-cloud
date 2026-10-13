@@ -50,6 +50,21 @@
           <option value="0" <?= setting('reg_verify', '1') !== '1' ? 'selected' : '' ?>>关闭（注册后直接可用，需先配置 SMTP）</option>
         </select>
       </div>
+      <div class="field">
+        <label>到期余额自动续费</label>
+        <select class="input" name="auto_renew_enabled">
+          <option value="1" <?= setting('auto_renew_enabled', '1') === '1' ? 'selected' : '' ?>>开启（到期时余额充足自动扣费续期，不足则照常停机）</option>
+          <option value="0" <?= setting('auto_renew_enabled', '1') !== '1' ? 'selected' : '' ?>>关闭（到期一律停机，等待用户手动续费）</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>服务条款内容（HTML，展示于 /terms，留空则提示未配置）</label>
+        <textarea class="input" name="tos_html" rows="5" style="font-family:var(--mono);font-size:12.5px;"><?= e(setting('tos_html', '')) ?></textarea>
+      </div>
+      <div class="field">
+        <label>隐私政策内容（HTML，展示于 /privacy，留空则提示未配置）</label>
+        <textarea class="input" name="privacy_html" rows="5" style="font-family:var(--mono);font-size:12.5px;"><?= e(setting('privacy_html', '')) ?></textarea>
+      </div>
     </div>
 
     <div class="set-panel" data-panel="mail">

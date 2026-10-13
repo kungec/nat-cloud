@@ -158,6 +158,12 @@ function billing_process_instance(array $inst): array
 
     /* 包年包月 */
     if ($inst['status'] === 'running' && $inst['expire_at'] !== null && strtotime((string) $inst['expire_at']) < $now) {
+        /* 余额自动续费：后台开启且余额充足时自动续一个相同周期，服务不中断 */
+        if (billing_auto_renew_try($inst)) {
+            $result['charged'] = true;
+            $result['status'] = 'running';
+            return $result;
+        }
         $upd = db()->prepare("UPDATE instances SET status = 'overdue', stopped_at = NOW() WHERE id = ? AND status = 'running'");
         $upd->execute([$inst['id']]);
         node_lifecycle_on_expire($inst);
@@ -198,6 +204,7 @@ function billing_ensure_pricing_columns(): void
         'SELECT semiannually_price FROM plans LIMIT 1' => 'ALTER TABLE plans ADD COLUMN semiannually_price DECIMAL(10,2) NOT NULL DEFAULT 0.00',
         'SELECT annually_price FROM plans LIMIT 1' => 'ALTER TABLE plans ADD COLUMN annually_price DECIMAL(10,2) NOT NULL DEFAULT 0.00',
         'SELECT `cycle` FROM instances LIMIT 1' => "ALTER TABLE instances ADD COLUMN cycle VARCHAR(12) NOT NULL DEFAULT 'monthly'",
+        'SELECT remind_level FROM instances LIMIT 1' => 'ALTER TABLE instances ADD COLUMN remind_level TINYINT NOT NULL DEFAULT 0',
     ] as $probe => $alter) {
         try {
             db_val($probe);
@@ -652,7 +659,7 @@ function billing_renew_instance(array $user, array $inst, string $cycle = 'month
 
         $base = $inst['expire_at'] && strtotime((string) $inst['expire_at']) > time() ? strtotime((string) $inst['expire_at']) : time();
         $newExpire = date('Y-m-d H:i:s', strtotime('+' . $months . ' months', $base));
-        $upd = db()->prepare("UPDATE instances SET expire_at = ?, status = 'running', stopped_at = NULL, cycle = ? WHERE id = ?");
+        $upd = db()->prepare("UPDATE instances SET expire_at = ?, status = 'running', stopped_at = NULL, cycle = ?, remind_level = 0 WHERE id = ?");
         $upd->execute([$newExpire, $cycle, $inst['id']]);
         node_lifecycle_on_renew($inst);
 
@@ -670,6 +677,88 @@ function billing_renew_instance(array $user, array $inst, string $cycle = 'month
         }
         return ['ok' => false, 'msg' => '续费失败：' . $e->getMessage()];
     }
+}
+
+/**
+ * 余额自动续费（包年包月到期时调用）：后台开启且余额充足时，
+ * 按实例当前周期自动续期一次。成功返回 true（内部已扣费/延期/下发开机/写流水）。
+ */
+function billing_auto_renew_try(array $inst): bool
+{
+    if (setting('auto_renew_enabled', '1') !== '1') {
+        return false;
+    }
+    if ($inst['billing_mode'] !== 'monthly') {
+        return false;
+    }
+    $stmt = db()->prepare('SELECT id, username, email, balance FROM users WHERE id = ? LIMIT 1');
+    $stmt->execute([(int) $inst['uid']]);
+    $user = $stmt->fetch();
+    if (!$user) {
+        return false;
+    }
+    billing_ensure_pricing_columns();
+    $cycle = billing_instance_cycle($inst);
+    $months = billing_cycle_months($cycle);
+    $charge = null;
+    if ((int) $inst['plan_id'] > 0) {
+        $pstmt = db()->prepare('SELECT * FROM plans WHERE id = ? LIMIT 1');
+        $pstmt->execute([(int) $inst['plan_id']]);
+        $plan = $pstmt->fetch();
+        if ($plan) {
+            $charge = billing_cycle_price($plan, $cycle);
+        }
+    }
+    if ($charge === null) {
+        $charge = round((float) $inst['monthly_price'] * $months, 2);
+    }
+    /* 余额不足直接走既有逾期停机流程，不做无谓事务 */
+    if ($charge <= 0 || (float) $user['balance'] < $charge) {
+        return false;
+    }
+    $re = billing_renew_instance($user, $inst, $cycle);
+    if (!$re['ok']) {
+        return false;
+    }
+    if (smtp_ready() && filter_var((string) $user['email'], FILTER_VALIDATE_EMAIL)) {
+        mail_send_autorenew((string) $user['email'], (string) $user['username'], (string) $inst['name'], (float) $charge, (string) $re['msg']);
+    }
+    return true;
+}
+
+/**
+ * 到期邮件提醒：包月运行中实例到期前 7/3/1 天各发一封。
+ * instances.remind_level 记录已发级别（续费成功自动归零），防重复发送。返回发送数量。
+ */
+function billing_send_expiry_reminders(): int
+{
+    billing_ensure_pricing_columns();
+    if (!smtp_ready()) {
+        return 0;
+    }
+    $sent = 0;
+    $rows = db_all("SELECT i.id, i.name, i.expire_at, i.remind_level, u.username, u.email
+        FROM instances i LEFT JOIN users u ON u.id = i.uid
+        WHERE i.status = 'running' AND i.billing_mode = 'monthly' AND i.expire_at IS NOT NULL
+          AND i.expire_at > NOW() AND i.expire_at <= DATE_ADD(NOW(), INTERVAL 7 DAY)");
+    foreach ($rows as $r) {
+        if (!filter_var((string) $r['email'], FILTER_VALIDATE_EMAIL)) {
+            continue;
+        }
+        $days = (int) ceil((strtotime((string) $r['expire_at']) - time()) / 86400);
+        $level = $days <= 1 ? 3 : ($days <= 3 ? 2 : 1);
+        if ($level <= (int) $r['remind_level']) {
+            continue;
+        }
+        $link = codepay_site_base() . '/dashboard/services';
+        [$ok] = mail_send_expiry((string) $r['email'], (string) $r['username'], (string) $r['name'], (string) $r['expire_at'], $days, $link);
+        if ($ok) {
+            $upd = db()->prepare('UPDATE instances SET remind_level = ? WHERE id = ?');
+            $upd->execute([$level, (int) $r['id']]);
+            $sent++;
+        }
+    }
+    return $sent;
 }
 
 /**

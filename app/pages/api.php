@@ -305,5 +305,20 @@ function api_node_report(): void
         }
     }
 
+    /* 心跳时间（状态页在线判定用） */
+    try {
+        $stmt = db()->prepare('UPDATE nodes SET last_seen = NOW() WHERE id = ?');
+        $stmt->execute([$nid]);
+    } catch (Throwable $e) {
+        /* 首次部署自愈：补齐 nodes.last_seen 列后重试 */
+        try {
+            db_exec('ALTER TABLE nodes ADD COLUMN last_seen DATETIME NULL');
+            $stmt = db()->prepare('UPDATE nodes SET last_seen = NOW() WHERE id = ?');
+            $stmt->execute([$nid]);
+        } catch (Throwable $e2) {
+            /* ignore */
+        }
+    }
+
     json_out(['ok' => true]);
 }

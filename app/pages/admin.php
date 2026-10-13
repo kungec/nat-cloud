@@ -1017,6 +1017,21 @@ function admin_handle(string $path, string $method): void
         $newStatus = $close ? 'closed' : 'replied';
         $upd = db()->prepare('UPDATE tickets SET status = ?, updated_at = NOW() WHERE id = ?');
         $upd->execute([$newStatus, $ticket['id']]);
+        /* 邮件通知工单所有者（SMTP 未配置或发送失败不影响回复主流程） */
+        if ($content !== '') {
+            try {
+                if (smtp_ready()) {
+                    $mstmt = db()->prepare('SELECT u.email, u.username FROM tickets t LEFT JOIN users u ON u.id = t.uid WHERE t.id = ? LIMIT 1');
+                    $mstmt->execute([(int) $ticket['id']]);
+                    $mu = $mstmt->fetch();
+                    if ($mu && filter_var((string) $mu['email'], FILTER_VALIDATE_EMAIL)) {
+                        mail_send_ticket_reply((string) $mu['email'], (string) $mu['username'], (int) $ticket['id'], (string) $ticket['title']);
+                    }
+                }
+            } catch (Throwable $e) {
+                /* 通知失败静默 */
+            }
+        }
         flash('ok', $close ? '已回复并关闭工单。' : '回复已发送。');
         $rstmt = db()->prepare('SELECT r.*, u.username FROM ticket_replies r LEFT JOIN users u ON u.id = r.uid WHERE r.ticket_id = ? ORDER BY r.id ASC');
         $rstmt->execute([$ticket['id']]);
@@ -1212,6 +1227,9 @@ function admin_handle(string $path, string $method): void
             'smtp_from' => trim(post_str('smtp_from', 120)),
             'smtp_fromname' => trim(post_str('smtp_fromname', 60)),
             'reg_verify' => post_str('reg_verify') === '0' ? '0' : '1',
+            'auto_renew_enabled' => post_str('auto_renew_enabled') === '0' ? '0' : '1',
+            'tos_html' => post_str('tos_html', 20000),
+            'privacy_html' => post_str('privacy_html', 20000),
         ];
         foreach ($keys as $k => $v) {
             try {
