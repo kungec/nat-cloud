@@ -69,6 +69,21 @@
         </div>
       </div>
       <div class="field">
+        <label>站点主题配色（影响整站链接、按钮与高亮色；用户侧深浅切换不受影响）</label>
+        <select class="input" name="site_accent">
+          <?php foreach ([
+            'default' => '默认（石墨黑白）',
+            'ocean' => '深海蓝',
+            'forest' => '森林绿',
+            'violet' => '罗兰紫',
+            'sunset' => '落日橙',
+            'rose' => '玫瑰红',
+          ] as $ak => $av): ?>
+            <option value="<?= e($ak) ?>" <?= setting('site_accent', 'default') === $ak ? 'selected' : '' ?>><?= e($av) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="field">
         <label>服务条款内容（HTML，展示于 /terms，留空则提示未配置）</label>
         <textarea class="input" name="tos_html" rows="5" style="font-family:var(--mono);font-size:12.5px;"><?= e(setting('tos_html', '')) ?></textarea>
       </div>

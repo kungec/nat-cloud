@@ -1,6 +1,8 @@
-<?php /* NAT Cloud - 页面头部（前台/认证页通用） */ ?>
+<?php /* NAT Cloud - 页面头部（前台/认证页通用） */
+$siteAccent = (string) setting('site_accent', 'default');
+?>
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN"<?php if (preg_match('~^(ocean|forest|violet|sunset|rose)$~', $siteAccent)) echo ' data-accent="' . e($siteAccent) . '"'; ?>>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

@@ -1285,6 +1285,7 @@ function admin_handle(string $path, string $method): void
             'smtp_fromname' => trim(post_str('smtp_fromname', 60)),
             'reg_verify' => post_str('reg_verify') === '0' ? '0' : '1',
             'auto_renew_enabled' => post_str('auto_renew_enabled') === '0' ? '0' : '1',
+            'site_accent' => in_array(($saTmp = post_str('site_accent', 12)), ['default', 'ocean', 'forest', 'violet', 'sunset', 'rose'], true) ? $saTmp : 'default',
             'ref_enabled' => post_str('ref_enabled') === '0' ? '0' : '1',
             'ref_percent' => (string) max(1, min(50, (float) post_str('ref_percent', 12))),
             'tos_html' => post_str('tos_html', 20000),

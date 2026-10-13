@@ -1225,3 +1225,90 @@ a.pager-btn:hover { color: var(--text); border-color: var(--text-faint); text-de
 @media (prefers-reduced-motion: reduce) {
   .page-load-bar { display: none; }
 }
+
+/* ---------- 站点配色主题（后台「基础设置 → 主题配色」切换） ---------- */
+
+/* 深海蓝 */
+[data-accent="ocean"] {
+  --accent: #93c5fd;
+  --accent-dim: rgba(147, 197, 253, 0.1);
+  --accent-line: rgba(147, 197, 253, 0.45);
+  --hero-dot-rgb: 147, 197, 253;
+}
+[data-accent="ocean"] .btn-primary,
+[data-accent="ocean"] .btn-light { background: #93c5fd; color: #0b1220; }
+[data-theme="light"][data-accent="ocean"] {
+  --accent: #1d4ed8;
+  --accent-dim: rgba(29, 78, 216, 0.08);
+  --accent-line: rgba(29, 78, 216, 0.4);
+}
+[data-theme="light"][data-accent="ocean"] .btn-primary,
+[data-theme="light"][data-accent="ocean"] .btn-light { background: #1d4ed8; color: #ffffff; }
+
+/* 森林绿 */
+[data-accent="forest"] {
+  --accent: #6ee7b7;
+  --accent-dim: rgba(110, 231, 183, 0.1);
+  --accent-line: rgba(110, 231, 183, 0.45);
+  --hero-dot-rgb: 110, 231, 183;
+}
+[data-accent="forest"] .btn-primary,
+[data-accent="forest"] .btn-light { background: #6ee7b7; color: #052014; }
+[data-theme="light"][data-accent="forest"] {
+  --accent: #047857;
+  --accent-dim: rgba(4, 120, 87, 0.08);
+  --accent-line: rgba(4, 120, 87, 0.4);
+}
+[data-theme="light"][data-accent="forest"] .btn-primary,
+[data-theme="light"][data-accent="forest"] .btn-light { background: #047857; color: #ffffff; }
+
+/* 罗兰紫 */
+[data-accent="violet"] {
+  --accent: #c4b5fd;
+  --accent-dim: rgba(196, 181, 253, 0.1);
+  --accent-line: rgba(196, 181, 253, 0.45);
+  --hero-dot-rgb: 196, 181, 253;
+}
+[data-accent="violet"] .btn-primary,
+[data-accent="violet"] .btn-light { background: #c4b5fd; color: #160a2b; }
+[data-theme="light"][data-accent="violet"] {
+  --accent: #6d28d9;
+  --accent-dim: rgba(109, 40, 217, 0.08);
+  --accent-line: rgba(109, 40, 217, 0.4);
+}
+[data-theme="light"][data-accent="violet"] .btn-primary,
+[data-theme="light"][data-accent="violet"] .btn-light { background: #6d28d9; color: #ffffff; }
+
+/* 落日橙 */
+[data-accent="sunset"] {
+  --accent: #fdba74;
+  --accent-dim: rgba(253, 186, 116, 0.12);
+  --accent-line: rgba(253, 186, 116, 0.5);
+  --hero-dot-rgb: 253, 186, 116;
+}
+[data-accent="sunset"] .btn-primary,
+[data-accent="sunset"] .btn-light { background: #fdba74; color: #2b1200; }
+[data-theme="light"][data-accent="sunset"] {
+  --accent: #c2410c;
+  --accent-dim: rgba(194, 65, 12, 0.08);
+  --accent-line: rgba(194, 65, 12, 0.4);
+}
+[data-theme="light"][data-accent="sunset"] .btn-primary,
+[data-theme="light"][data-accent="sunset"] .btn-light { background: #c2410c; color: #ffffff; }
+
+/* 玫瑰红 */
+[data-accent="rose"] {
+  --accent: #fda4af;
+  --accent-dim: rgba(253, 164, 175, 0.12);
+  --accent-line: rgba(253, 164, 175, 0.5);
+  --hero-dot-rgb: 253, 164, 175;
+}
+[data-accent="rose"] .btn-primary,
+[data-accent="rose"] .btn-light { background: #fda4af; color: #2b0008; }
+[data-theme="light"][data-accent="rose"] {
+  --accent: #be123c;
+  --accent-dim: rgba(190, 18, 60, 0.08);
+  --accent-line: rgba(190, 18, 60, 0.4);
+}
+[data-theme="light"][data-accent="rose"] .btn-primary,
+[data-theme="light"][data-accent="rose"] .btn-light { background: #be123c; color: #ffffff; }
