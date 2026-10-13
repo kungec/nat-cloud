@@ -7,7 +7,11 @@
   <div class="card"><div class="empty">还没有节点。添加节点后，在套餐里绑定即可实现付款全自动开通。</div></div>
 <?php else: ?>
 <div class="plist-grid">
-  <?php foreach ($rows as $n): $on = (int) $n['status'] === 1; ?>
+  <?php foreach ($rows as $n): $on = (int) $n['status'] === 1;
+    $mJson = (string) ($n['metrics_json'] ?? '');
+    $m = $mJson !== '' ? json_decode($mJson, true) : null;
+    $online = $on && $n['last_seen'] !== null && strtotime((string) $n['last_seen']) > time() - 300;
+  ?>
     <div class="card ncard<?= $on ? '' : ' pcard-off' ?>" draggable="false" data-id="<?= (int) $n['id'] ?>">
       <div class="pcard-head">
         <span class="drag-handle" title="拖动排序（决定前台展示顺序）">⠿</span>
@@ -19,6 +23,21 @@
         <span class="k">内网段</span><span class="mono"><?= e($n['net_prefix']) ?>.x</span>
         <span class="k">端口范围</span><span class="mono"><?= (int) $n['port_start'] ?> - <?= (int) $n['port_end'] ?></span>
         <span class="k">实例占用</span><span><?= (int) $n['used'] ?> / <?= (int) $n['max_instances'] ?></span>
+      </div>
+      <div class="ncard-grid" style="margin-top:6px;">
+        <span class="k">心跳</span><span style="font-size:12.5px;">
+          <?php if ($n['last_seen'] === null): ?><span style="color:var(--text-dim);">从未上报</span>
+          <?php elseif ($online): ?><span style="color:#0a7d33;font-weight:600;">在线</span>（<?= e(dt($n['last_seen'])) ?>）
+          <?php else: ?><span style="color:#b3261e;font-weight:600;">超 5 分钟未上报</span>（<?= e(dt($n['last_seen'])) ?>）<?php endif; ?>
+        </span>
+        <?php if (is_array($m)): ?>
+        <span class="k">负载</span><span class="mono"><?= e(number_format((float) ($m['load1'] ?? 0), 2)) ?></span>
+        <?php $mt = (int) ($m['mem_total_mb'] ?? 0); $ma = (int) ($m['mem_avail_mb'] ?? 0); ?>
+        <span class="k">内存</span><span class="mono"><?= $mt > 0 ? e((string) ($mt - $ma)) . ' / ' . $mt . ' MB' : '—' ?></span>
+        <?php $dt = (int) ($m['disk_total_gb'] ?? 0); $du = (int) ($m['disk_used_gb'] ?? 0); ?>
+        <span class="k">磁盘</span><span class="mono"><?= $dt > 0 ? $du . ' / ' . $dt . ' GB' : '—' ?></span>
+        <span class="k">运行容器</span><span class="mono"><?= (int) ($m['containers_running'] ?? 0) ?></span>
+        <?php endif; ?>
       </div>
       <?php if ((string) $n['remark'] !== ''): ?><div class="pcard-cycles"><?= e($n['remark']) ?></div><?php endif; ?>
       <div class="pcard-actions">

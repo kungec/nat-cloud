@@ -12,14 +12,17 @@ function page_static_handle(string $path): void
             /* 列已存在 */
         }
         $nodes = [];
-        foreach (db_all('SELECT id, name, status, last_seen FROM nodes ORDER BY sort ASC, id ASC') as $n) {
+        foreach (db_all('SELECT id, name, status, last_seen, metrics_json FROM nodes ORDER BY sort ASC, id ASC') as $n) {
             $seen = $n['last_seen'] ? strtotime((string) $n['last_seen']) : 0;
             $online = (int) $n['status'] === 1 && $seen > time() - 300;
+            $mJson = (string) ($n['metrics_json'] ?? '');
+            $m = $mJson !== '' ? json_decode($mJson, true) : null;
             $nodes[] = [
                 'name' => (string) $n['name'],
                 'enabled' => (int) $n['status'] === 1,
                 'online' => $online,
                 'last_seen' => $n['last_seen'] ?: '',
+                'm' => is_array($m) ? $m : [],
             ];
         }
         $news = db_all('SELECT id, title, created_at FROM news WHERE status = 1 ORDER BY id DESC LIMIT 5');

@@ -305,16 +305,19 @@ function api_node_report(): void
         }
     }
 
-    /* 心跳时间（状态页在线判定用） */
+    /* 心跳时间与资源指标（状态页/管理后台在线判定与展示用） */
+    $metrics = is_array($body['metrics'] ?? null) ? $body['metrics'] : null;
+    $metricsJson = $metrics ? json_encode($metrics, JSON_UNESCAPED_UNICODE) : null;
     try {
-        $stmt = db()->prepare('UPDATE nodes SET last_seen = NOW() WHERE id = ?');
-        $stmt->execute([$nid]);
+        $stmt = db()->prepare('UPDATE nodes SET last_seen = NOW(), metrics_json = ? WHERE id = ?');
+        $stmt->execute([$metricsJson, $nid]);
     } catch (Throwable $e) {
-        /* 首次部署自愈：补齐 nodes.last_seen 列后重试 */
+        /* 首次部署自愈：补齐 nodes.last_seen / nodes.metrics_json 列后重试 */
         try {
             db_exec('ALTER TABLE nodes ADD COLUMN last_seen DATETIME NULL');
-            $stmt = db()->prepare('UPDATE nodes SET last_seen = NOW() WHERE id = ?');
-            $stmt->execute([$nid]);
+            db_exec('ALTER TABLE nodes ADD COLUMN metrics_json TEXT NULL');
+            $stmt = db()->prepare('UPDATE nodes SET last_seen = NOW(), metrics_json = ? WHERE id = ?');
+            $stmt->execute([$metricsJson, $nid]);
         } catch (Throwable $e2) {
             /* ignore */
         }

@@ -12,7 +12,7 @@
         <div class="empty">暂未接入节点</div>
       <?php else: ?>
         <table class="tbl">
-          <thead><tr><th>节点</th><th>状态</th><th>最后心跳</th></tr></thead>
+          <thead><tr><th>节点</th><th>状态</th><th>负载</th><th>内存</th><th>磁盘</th></tr></thead>
           <tbody>
           <?php foreach ($nodes as $n): ?>
             <tr>
@@ -26,7 +26,9 @@
                   <span class="tag closed">离线</span>
                 <?php endif; ?>
               </td>
-              <td class="mono" style="font-size:12.5px;color:var(--text-dim);"><?= e($n['last_seen'] !== '' ? dt($n['last_seen']) : '从未上报') ?></td>
+              <td class="mono" style="font-size:12.5px;"><?= isset($n['m']['load1']) ? e(number_format((float) $n['m']['load1'], 2)) : '—' ?></td>
+              <td class="mono" style="font-size:12.5px;"><?= isset($n['m']['mem_total_mb']) && (int) $n['m']['mem_total_mb'] > 0 ? e((string) ((int) $n['m']['mem_total_mb'] - (int) $n['m']['mem_avail_mb'])) . ' / ' . (int) $n['m']['mem_total_mb'] . ' MB' : '—' ?></td>
+              <td class="mono" style="font-size:12.5px;"><?= isset($n['m']['disk_total_gb']) && (int) $n['m']['disk_total_gb'] > 0 ? e((string) ($n['m']['disk_used_gb'] ?? 0)) . ' / ' . (int) $n['m']['disk_total_gb'] . ' GB' : '—' ?></td>
             </tr>
           <?php endforeach; ?>
           </tbody>

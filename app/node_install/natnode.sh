@@ -293,6 +293,26 @@ images_json() {
   printf '%s' "$arr"
 }
 
+# ---------- 节点资源指标（负载/内存/磁盘/运行容器数，随对账上报） ----------
+metrics_json() {
+  local load1 mem_total mem_avail disk_total disk_used running
+  read -r load1 _ < /proc/loadavg 2>/dev/null || load1=0
+  mem_total=$(awk '/^MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)
+  mem_avail=$(awk '/^MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null)
+  disk_total=$(df -BG "$LXC" 2>/dev/null | awk 'NR==2 {print int($2)}')
+  disk_used=$(df -BG "$LXC" 2>/dev/null | awk 'NR==2 {print int($3)}')
+  running=$(lxc-ls --running 2>/dev/null | wc -w)
+  case "$load1" in ''|*[!0-9.]*) load1=0;; esac
+  case "$mem_total" in ''|*[!0-9]*) mem_total=0;; esac
+  case "$mem_avail" in ''|*[!0-9]*) mem_avail=0;; esac
+  case "$disk_total" in ''|*[!0-9]*) disk_total=0;; esac
+  case "$disk_used" in ''|*[!0-9]*) disk_used=0;; esac
+  case "$running" in ''|*[!0-9]*) running=0;; esac
+  jq -cn --argjson l1 "$load1" --argjson mt "$mem_total" --argjson ma "$mem_avail" \
+    --argjson dt "$disk_total" --argjson du "$disk_used" --argjson run "$running" \
+    '{load1:$l1, mem_total_mb:$mt, mem_avail_mb:$ma, disk_total_gb:$dt, disk_used_gb:$du, containers_running:$run}'
+}
+
 
 # ---------- Web 控制台（ttyd + 容器 root shell，一次性凭据 + TTL 自毁） ----------
 t_console() { # $1=name $2=port $3=token $4=ttl_sec
@@ -381,7 +401,7 @@ cmd_sync() {
   done < <(echo "$resp" | jq -r '.data.tasks[]?.id')
 
   local body
-  body=$(jq -cn --argjson tasks "$results" --argjson stats "$(traffic_json)" --argjson states "$(states_json)" --argjson images "$(images_json)" '{tasks:$tasks, traffic:$stats, states:$states, images:$images}')
+  body=$(jq -cn --argjson tasks "$results" --argjson stats "$(traffic_json)" --argjson states "$(states_json)" --argjson images "$(images_json)" --argjson metrics "$(metrics_json)" '{tasks:$tasks, traffic:$stats, states:$states, images:$images, metrics:$metrics}')
   local rp
   rp=$(api_post node_report "$body")
   log "sync 完成：任务 $(echo "$results" | jq 'length') 个，回报 $(echo "$rp" | head -c 80)"
