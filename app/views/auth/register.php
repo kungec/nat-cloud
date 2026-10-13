@@ -27,9 +27,10 @@
     <div class="auth-card">
       <div class="card">
         <h1>创建账号</h1>
-        <p class="sub">注册即可开通你的第一台 NAT 主机</p>
+        <p class="sub">注册即可开通你的第一台 NAT 主机<?php $regRef = $refCode ?? ($_SESSION['reg_ref'] ?? ''); if ($regRef !== ''): ?> · 邀请码 <b><?= e($regRef) ?></b> 已应用<?php endif; ?></p>
         <form method="post" action="/auth/register">
           <?= csrf_field() ?>
+          <input type="hidden" name="ref" value="<?= e($refCode ?? ($_SESSION['reg_ref'] ?? '')) ?>">
           <div class="field">
             <label>用户名</label>
             <input class="input" type="text" name="username" value="<?= e($old['username'] ?? '') ?>" placeholder="字母开头，3-32 位" autocomplete="username" required>

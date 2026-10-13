@@ -65,9 +65,12 @@ function auth_handle(string $path, string $method): void
 
     if ($path === '/auth/register') {
         if ($method === 'GET') {
-            respond(view('auth/register', ['title' => '免费注册', 'old' => []]));
+            $refQ = strtoupper(trim(query_str('ref', 16)));
+            $_SESSION['reg_ref'] = preg_match('~^NC[A-Z0-9]{6}$~', $refQ) ? $refQ : '';
+            respond(view('auth/register', ['title' => '免费注册', 'old' => [], 'refCode' => $_SESSION['reg_ref']]));
         }
         csrf_check();
+        $refCode = strtoupper(trim(post_str('ref', 16)));
         if (!captcha_check()) {
             flash('err', '图形验证码不正确。');
             respond(view('auth/register', ['title' => '免费注册', 'old' => $old]), 422);
@@ -105,8 +108,14 @@ function auth_handle(string $path, string $method): void
             respond(view('auth/register', ['title' => '免费注册', 'old' => $old]), 409);
         }
         $needVerify = setting('reg_verify', '1') === '1' && smtp_ready();
-        $ins = db()->prepare('INSERT INTO users (username, email, password_hash, balance, status, created_at) VALUES (?, ?, ?, 0, ?, NOW())');
-        $ins->execute([$username, $email, password_hash($password, PASSWORD_DEFAULT), $needVerify ? 0 : 1]);
+        if ($refCode === '' ) {
+            $refCode = strtoupper(trim((string) ($_SESSION['reg_ref'] ?? '')));
+        }
+        $refBy = ref_resolve($refCode);
+        ref_ensure_columns();
+        unset($_SESSION['reg_ref']);
+        $ins = db()->prepare('INSERT INTO users (username, email, password_hash, balance, status, ref_by, created_at) VALUES (?, ?, ?, 0, ?, NULLIF(?, 0), NOW())');
+        $ins->execute([$username, $email, password_hash($password, PASSWORD_DEFAULT), $needVerify ? 0 : 1, $refBy]);
         $uid = (int) db()->lastInsertId();
         if ($needVerify) {
             mail_ensure_tables();

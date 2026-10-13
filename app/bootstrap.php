@@ -115,7 +115,9 @@ require __DIR__ . '/usdt.php';
 require __DIR__ . '/mail.php';
 require __DIR__ . '/coupons.php';
 require __DIR__ . '/telegram.php';
+require __DIR__ . '/referral.php';
 require __DIR__ . '/billing.php';
+require __DIR__ . '/openapi.php';
 require __DIR__ . '/router.php';
 
 /* 首次访问懒计费：只为当前登录用户结算，代价很小 */

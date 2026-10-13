@@ -847,16 +847,36 @@ function dash_handle(string $path, string $method): void
     }
 
     /* ---------- 设置 ---------- */
+    if ($path === '/dashboard/invite' && $method === 'GET') {
+        ref_ensure_columns();
+        $code = ref_code_for($uid);
+        $link = codepay_site_base() . '/auth/register?ref=' . $code;
+        $stats = ref_stats($uid);
+        $invited = db_all('SELECT id, username, created_at, status FROM users WHERE ref_by = ? ORDER BY id DESC LIMIT 50', [$uid]);
+        $commissions = db_all("SELECT amount, balance_after, remark, created_at FROM transactions WHERE uid = ? AND type = 'referral' ORDER BY id DESC LIMIT 20", [$uid]);
+        respond(view('dashboard/invite', ['title' => '邀请返利', 'link' => $link, 'code' => $code, 'stats' => $stats, 'invited' => $invited, 'commissions' => $commissions, 'percent' => (int) ref_percent()]));
+    }
     if ($path === '/dashboard/settings' && $method === 'GET') {
         $keys = db_all('SELECT id, name, public_key, created_at FROM ssh_keys WHERE uid = ? ORDER BY id DESC', [$uid]);
         $sessions = auth_sessions($uid, 0);
-        respond(view('dashboard/settings', ['title' => '设置', 'keys' => $keys, 'sessions' => $sessions]));
+        $apiToken = (string) db_val('SELECT api_token FROM users WHERE id = ? LIMIT 1', [$uid]);
+        respond(view('dashboard/settings', ['title' => '设置', 'keys' => $keys, 'sessions' => $sessions, 'apiToken' => $apiToken]));
     }
     $settingsView = function () use ($uid) {
         $keys = db_all('SELECT id, name, public_key, created_at FROM ssh_keys WHERE uid = ? ORDER BY id DESC', [$uid]);
         $sessions = auth_sessions($uid, 0);
-        respond(view('dashboard/settings', ['title' => '设置', 'keys' => $keys, 'sessions' => $sessions]));
+        $apiToken = (string) db_val('SELECT api_token FROM users WHERE id = ? LIMIT 1', [$uid]);
+        respond(view('dashboard/settings', ['title' => '设置', 'keys' => $keys, 'sessions' => $sessions, 'apiToken' => $apiToken]));
     };
+    if ($path === '/dashboard/settings/api-token' && $method === 'POST') {
+        csrf_check();
+        openapi_ensure_columns();
+        $token = bin2hex(random_bytes(32));
+        $upd = db()->prepare('UPDATE users SET api_token = ? WHERE id = ?');
+        $upd->execute([$token, $uid]);
+        flash('ok', 'API Token 已生成，请立即复制保存。');
+        $settingsView();
+    }
     if ($path === '/dashboard/settings/username' && $method === 'POST') {
         csrf_check();
         $newName = post_str('username', 32);

@@ -124,6 +124,11 @@ function usdt_credit_order(array $order, string $txid): bool
         $ins = db()->prepare("INSERT INTO transactions (uid, type, amount, balance_after, remark, created_at) VALUES (?, 'topup', ?, ?, ?, NOW())");
         $ins->execute([$fresh['uid'], (float) $fresh['amount'], $after, 'USDT 充值到账 单号' . $fresh['order_no']]);
         db()->commit();
+        try {
+            ref_award_on_topup((int) $fresh['uid'], (float) $fresh['amount']);
+        } catch (Throwable $e2) {
+            /* 返佣失败不影响入账 */
+        }
         return true;
     } catch (Throwable $e) {
         if (db()->inTransaction()) {

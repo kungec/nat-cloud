@@ -903,6 +903,11 @@ function admin_handle(string $path, string $method): void
             $ins = db()->prepare("INSERT INTO transactions (uid, type, amount, balance_after, remark, created_at) VALUES (?, 'topup', ?, ?, ?, NOW())");
             $ins->execute([$order['uid'], (float) $order['amount'], $after, '充值到账 单号' . $order['order_no']]);
             db()->commit();
+            try {
+                ref_award_on_topup((int) $order['uid'], (float) $order['amount']);
+            } catch (Throwable $e2) {
+                /* 返佣失败不影响入账 */
+            }
             flash('ok', '充值单已确认到账。');
         } catch (Throwable $e) {
             if (db()->inTransaction()) {
@@ -1280,6 +1285,8 @@ function admin_handle(string $path, string $method): void
             'smtp_fromname' => trim(post_str('smtp_fromname', 60)),
             'reg_verify' => post_str('reg_verify') === '0' ? '0' : '1',
             'auto_renew_enabled' => post_str('auto_renew_enabled') === '0' ? '0' : '1',
+            'ref_enabled' => post_str('ref_enabled') === '0' ? '0' : '1',
+            'ref_percent' => (string) max(1, min(50, (float) post_str('ref_percent', 12))),
             'tos_html' => post_str('tos_html', 20000),
             'privacy_html' => post_str('privacy_html', 20000),
             'tg_enabled' => post_str('tg_enabled') === '1' ? '1' : '0',

@@ -67,6 +67,12 @@ function route_dispatch(string $uri, string $method): void
         page_static_handle($path);
     }
 
+    /* 用户开放 API（Bearer Token） */
+    if (strpos($path, '/open/v1') === 0) {
+        require_once NC_ROOT . '/app/openapi.php';
+        openapi_handle($path, $method);
+    }
+
     if ($path === '/api/price') {
         require NC_ROOT . '/app/pages/api.php';
         api_price();

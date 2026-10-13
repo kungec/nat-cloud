@@ -59,6 +59,16 @@
         </select>
       </div>
       <div class="field">
+        <label>推荐返利（受邀用户在线充值时，邀请人按比例获得返佣）</label>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <select class="input" name="ref_enabled" style="max-width:240px;">
+            <option value="1" <?= setting('ref_enabled', '1') === '1' ? 'selected' : '' ?>>开启</option>
+            <option value="0" <?= setting('ref_enabled', '1') !== '1' ? 'selected' : '' ?>>关闭</option>
+          </select>
+          <input class="input" type="number" name="ref_percent" value="<?= e(setting('ref_percent', '10')) ?>" min="1" max="50" step="1" style="max-width:110px;"> <span style="color:var(--text-dim);font-size:13px;">% 返佣比例</span>
+        </div>
+      </div>
+      <div class="field">
         <label>服务条款内容（HTML，展示于 /terms，留空则提示未配置）</label>
         <textarea class="input" name="tos_html" rows="5" style="font-family:var(--mono);font-size:12.5px;"><?= e(setting('tos_html', '')) ?></textarea>
       </div>

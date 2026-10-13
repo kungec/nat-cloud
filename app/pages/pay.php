@@ -37,6 +37,7 @@ function pay_credit_order(string $orderNo, float $amount, string $tradeNo, strin
         $ins = db()->prepare("INSERT INTO transactions (uid, type, amount, balance_after, remark, created_at) VALUES (?, 'topup', ?, ?, ?, NOW())");
         $ins->execute([$order['uid'], (float) $order['amount'], $after, $remark]);
         db()->commit();
+        ref_award_on_topup((int) $order['uid'], (float) $order['amount']);
         return true;
     } catch (Throwable $e) {
         if (db()->inTransaction()) {

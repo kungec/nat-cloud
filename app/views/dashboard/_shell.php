@@ -20,6 +20,7 @@
       <a class="<?= nav_on('/dashboard/tickets', $cur) ?>" href="/dashboard/tickets"><span class="ico"><?= nc_icon('headset') ?></span>工单</a>
       <a class="<?= nav_on('/dashboard/create', $cur) ?>" href="/dashboard/create"><span class="ico"><?= nc_icon('plus') ?></span>创建实例</a>
       <a class="<?= nav_on('/dashboard/kyc', $cur) ?>" href="/dashboard/kyc"><span class="ico"><?= nc_icon('shield') ?></span>实名认证</a>
+      <a class="<?= nav_on('/dashboard/invite', $cur) ?>" href="/dashboard/invite"><span class="ico"><?= nc_icon('user') ?></span>邀请返利</a>
       <a class="<?= nav_on('/dashboard/settings', $cur) ?>" href="/dashboard/settings"><span class="ico"><?= nc_icon('gear') ?></span>设置</a>
     </nav>
     <div class="side-foot"></div>
@@ -54,6 +55,7 @@
     ['/dashboard/wallet', 'wallet', '钱包', ''],
     ['/dashboard/billing', 'receipt', '账单', ''],
     ['/dashboard/tickets', 'headset', '工单', ''],
+    ['/dashboard/invite', 'users', '邀请', ''],
   ];
   foreach ($btItems as $it):
     $on = ($it[3] === 'exact') ? ($cur === $it[0]) : (strpos($cur, $it[0]) === 0);
