@@ -170,7 +170,7 @@ function plan_ram_txt($mb) { return (int) $mb >= 1024 ? (round($mb / 1024 * 10) 
         </div>
         <div class="field" style="margin-top:6px;">
           <label>优惠码（可选，仅包年包月可用）</label>
-          <input class="input" type="text" name="coupon" maxlength="32" placeholder="有优惠码请在此输入" autocomplete="off">
+          <input class="input" type="text" name="coupon" id="couponInput" maxlength="32" placeholder="有优惠码请在此输入" autocomplete="off">
         </div>
         <div class="sum-row" style="border-bottom:0;"><span>当前余额</span><span>¥<?= e(money($u['balance'])) ?></span></div>
         <div class="pay-box">

@@ -346,7 +346,11 @@
         document.getElementById("sumPlanImage").textContent = osSel && osSel.value ? (PLAN_IMG_LABELS[osSel.value] || osSel.value) : "-";
         document.getElementById("sumPlanMonthly").textContent = "¥" + cFmt(p.monthly) + "/月";
         var need = cState.mode === "monthly" ? total : Math.max(5, Math.round(p.hourly * 24 * 100) / 100);
-        var ins = CP.balance < need;
+        /* 填写优惠码时折扣以服务端核算为准，前端不用原价拦截提交 */
+        var couponEl = document.getElementById("couponInput");
+        var hasCoupon = couponEl && couponEl.value.replace(/\s/g, "") !== "";
+        var ins = !hasCoupon && cState.mode === "monthly" && CP.balance < need;
+        if (cState.mode !== "monthly" && !hasCoupon) ins = CP.balance < need;
         document.getElementById("planInsufficient").style.display = ins ? "" : "none";
         if (ins) {
           var insMsg = document.getElementById("planInsufficientMsg");
@@ -401,6 +405,8 @@
       calc();
     });
     if (osSel) osSel.addEventListener("change", calc);
+    var couponInputEl = document.getElementById("couponInput");
+    if (couponInputEl) couponInputEl.addEventListener("input", calc);
     document.querySelectorAll(".mode-card").forEach(function (card) {
       card.addEventListener("click", function () {
         document.querySelectorAll(".mode-card").forEach(function (c) { c.classList.remove("on"); });
