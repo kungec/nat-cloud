@@ -22,10 +22,15 @@ function pay_credit_order(string $orderNo, float $amount, string $tradeNo, strin
         $stmt = db()->prepare("SELECT * FROM orders WHERE order_no = ? AND type = 'topup' FOR UPDATE");
         $stmt->execute([$orderNo]);
         $order = $stmt->fetch();
-        if (!$order || $order['status'] !== 'pending') {
-            /* 已处理或不存在：幂等确认，防止网关重复推送 */
+        if (!$order) {
+            /* 订单不存在（跨商户误推/伪造单号）：幂等确认，重试无意义 */
             db()->rollBack();
-            return $order ? 'duplicate' : 'mismatch';
+            return 'notfound';
+        }
+        if ($order['status'] !== 'pending') {
+            /* 已处理：幂等确认，防止网关重复推送 */
+            db()->rollBack();
+            return 'duplicate';
         }
         if (abs((float) $order['amount'] - $amount) > 0.01) {
             db()->rollBack();
@@ -58,7 +63,7 @@ function pay_credit_order(string $orderNo, float $amount, string $tradeNo, strin
 /** 码支付协议：仅 success 会停止重试；其余文本网关将继续通知（用于真实失败等待恢复后重试） */
 function codepay_notify_reply(string $status): void
 {
-    echo $status === 'credited' || $status === 'duplicate' ? 'success' : 'retry later';
+    echo in_array($status, ['credited', 'duplicate', 'notfound'], true) ? 'success' : 'retry later';
     exit;
 }
 
@@ -115,7 +120,7 @@ function pay_handle(string $path, string $method): void
         $money = (float) ($params['total_amount'] ?? 0);
         $status = pay_credit_order($orderNo, $money, $tradeNo, '支付宝充值到账 单号' . $orderNo . ($tradeNo !== '' ? ' 流水号' . $tradeNo : ''));
         /* 支付宝协议：仅 'success' 停止重试 */
-        echo $status === 'credited' || $status === 'duplicate' ? 'success' : 'failure';
+        echo in_array($status, ['credited', 'duplicate', 'notfound'], true) ? 'success' : 'failure';
         exit;
     }
 
@@ -154,7 +159,7 @@ function pay_handle(string $path, string $method): void
         $tradeNo = trim((string) ($data['transaction_id'] ?? ''));
         $money = ((int) ($data['amount']['total'] ?? 0)) / 100;
         $status = pay_credit_order($orderNo, $money, $tradeNo, '微信充值到账 单号' . $orderNo . ($tradeNo !== '' ? ' 流水号' . $tradeNo : ''));
-        if ($status === 'credited' || $status === 'duplicate') {
+        if (in_array($status, ['credited', 'duplicate', 'notfound'], true)) {
             echo json_encode(['code' => 'SUCCESS']);
         } else {
             /* 微信协议：FAIL 会触发官方重试通知 */

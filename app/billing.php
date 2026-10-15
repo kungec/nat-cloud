@@ -150,7 +150,9 @@ function billing_process_instance(array $inst): array
             if ($freshLast === false) {
                 throw new RuntimeException('instance state race');
             }
-            $hours = (int) floor(($now - strtotime((string) $freshLast)) / 3600);
+            /* NULL 起点视为从当前时刻起算（与事务外口径一致，且保证下方 CAS 可命中） */
+            $lastTs = $freshLast !== null && (string) $freshLast !== '' ? strtotime((string) $freshLast) : $now;
+            $hours = (int) floor(($now - $lastTs) / 3600);
             if ($hours < 1) {
                 db()->rollBack();
                 return $result;
@@ -162,8 +164,13 @@ function billing_process_instance(array $inst): array
                 throw new RuntimeException('balance race');
             }
             /* CAS：仅当 last_billed_at 仍为锁内读到的值时推进，杜绝并发双扣 */
-            $upd = db()->prepare("UPDATE instances SET last_billed_at = DATE_ADD(last_billed_at, INTERVAL ? HOUR) WHERE id = ? AND last_billed_at = ?");
-            $upd->execute([$hours, $inst['id'], $freshLast]);
+            if ($freshLast !== null && (string) $freshLast !== '') {
+                $upd = db()->prepare("UPDATE instances SET last_billed_at = DATE_ADD(last_billed_at, INTERVAL ? HOUR) WHERE id = ? AND last_billed_at = ?");
+                $upd->execute([$hours, $inst['id'], $freshLast]);
+            } else {
+                $upd = db()->prepare("UPDATE instances SET last_billed_at = NOW() WHERE id = ? AND last_billed_at IS NULL");
+                $upd->execute([$inst['id']]);
+            }
             if ($upd->rowCount() !== 1) {
                 throw new RuntimeException('billing race');
             }
