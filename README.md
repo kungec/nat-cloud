@@ -57,17 +57,24 @@
 
 ## 🚀 快速开始
 
-### Linux（宝塔面板，推荐）
+### Linux（坤面板 KunPanel，推荐）
 
-1. 宝塔新建站点（PHP 7.4+）并创建数据库；
-2. 上传 [最新 Release](../../releases) 压缩包到站点根目录解压；
-3. 运行目录设为 `/public`，伪静态添加：
+[坤面板 KunPanel](https://github.com/kungec/kunpanel) 是开源免费的轻量级服务器运维面板（Go 单二进制、开箱即用），面板自身一行命令安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kungec/kunpanel/main/scripts/install.sh | bash
+```
+
+1. 登录面板，**应用商店**一键安装 PHP 7.4+ 与 MySQL；
+2. **网站 → 添加站点**：填域名，类型选 PHP 7.4+，根目录指向站点目录下的 `public`；
+3. **数据库**创建 MySQL 库（utf8mb4），**文件管理**上传 [最新 Release](../../releases) 压缩包到站点目录解压；
+4. **网站 → 设置 → 伪静态**添加：
    ```nginx
    location / { try_files $uri $uri/ /index.php?$query_string; }
    ```
-4. 访问域名进入**安装向导**（环境自检 → 填数据库与管理员 → 完成）；
-5. 保存安装完成页展示的**随机管理后台地址**；
-6. 计划任务添加 `cron/bill.php`（每分钟）与 `cron/traffic_reset.php`（每日 00:05）。
+5. 访问域名进入**安装向导**（环境自检 → 填数据库与管理员 → 完成）；
+6. 保存安装完成页展示的**随机管理后台地址**；
+7. **计划任务**添加 `cron/bill.php`（每分钟）与 `cron/traffic_reset.php`（每日 00:05）两个 Shell 任务。
 
 ### Windows Server 2016+（IIS）
 
