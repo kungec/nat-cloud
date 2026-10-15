@@ -1,0 +1,27 @@
+services:
+  web:
+    image: php:8.2-apache
+    container_name: natcloud-web
+    ports:
+      - "8082:80"
+    volumes:
+      - ./app:/var/www/html/app
+      - ./public:/var/www/html
+      - ./cron:/var/www/html/cron
+      - nc_data:/var/www/html/data
+    depends_on:
+      - db
+    restart: unless-stopped
+  db:
+    image: mariadb:10.11
+    container_name: natcloud-db
+    environment:
+      MYSQL_DATABASE: natcloud
+      MYSQL_ROOT_PASSWORD: Kun@NC2026
+    volumes:
+      - nc_db:/var/lib/mysql
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    restart: unless-stopped
+volumes:
+  nc_data:
+  nc_db:
