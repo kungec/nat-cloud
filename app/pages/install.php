@@ -172,17 +172,17 @@ function install_render_check(string $err = '', array $old = []): void
     <?php if ($isWin): ?>
     <div class="ins-hint" id="hintRewrite" style="display:none;">检测失败：IIS 需安装 <b>URL Rewrite 模块 2.0</b>；程序已自带 web.config 伪静态规则（public/ 与解压根目录各一份），确认站点加载后刷新本页。</div>
     <?php else: ?>
-    <div class="ins-hint" id="hintRewrite" style="display:none;">检测失败：请在宝塔「网站 → 设置 → 伪静态」中添加以下配置后刷新本页——<pre class="ins-code">location / { try_files $uri $uri/ /index.php?$query_string; }</pre></div>
+    <div class="ins-hint" id="hintRewrite" style="display:none;">检测失败：请在面板「网站 → 设置 → 伪静态」中添加以下配置后刷新本页——<pre class="ins-code">location / { try_files $uri $uri/ /index.php?$query_string; }</pre></div>
     <?php endif; ?>
     <div class="ins-row"><span>运行目录 /public（网站目录）</span><span class="st" id="stRun">检测中…</span></div>
     <?php if ($isWin): ?>
     <div class="ins-hint" id="hintRun" style="display:none;">检测失败：推荐将 IIS 站点的<b>物理路径直接指向解压后的 public 文件夹</b>；若指向解压根目录，请改用根目录自带的 web.config 兼容配置。</div>
     <?php else: ?>
-    <div class="ins-hint" id="hintRun" style="display:none;">检测失败：请在宝塔「网站 → 设置 → 网站目录」把运行目录设置为 <b>/public</b> 并保存后刷新本页。</div>
+    <div class="ins-hint" id="hintRun" style="display:none;">检测失败：请在面板「网站 → 设置 → 网站目录」把运行目录设置为 <b>/public</b> 并保存后刷新本页。</div>
     <?php endif; ?>
 
     <h3 style="font-size:15px;margin:20px 0 12px;">数据库与管理员</h3>
-    <div class="ins-hint" style="margin-bottom:12px;">请先在宝塔「数据库」页面创建数据库（或使用已有数据库），再填写下方信息。</div>
+    <div class="ins-hint" style="margin-bottom:12px;">请先在面板「数据库」页面创建数据库（或使用已有数据库），再填写下方信息。</div>
     <form method="post" action="/install" id="insForm">
       <input type="hidden" name="_csrf" value="<?= $token ?>">
       <div class="grid2">
@@ -193,6 +193,7 @@ function install_render_check(string $err = '', array $old = []): void
         <div class="field full"><label>数据库密码</label><input class="input" type="password" name="db_pass" value="" placeholder="留空表示无密码"></div>
         <div class="field"><label>管理员用户名</label><input class="input" type="text" name="admin_user" value="<?= $oldEsc('admin_user') ?>" placeholder="3-32 位字母/数字/下划线" required></div>
         <div class="field"><label>站点名称（可选）</label><input class="input" type="text" name="site_name" value="<?= $oldEsc('site_name') ?: 'NAT Cloud' ?>" maxlength="60"></div>
+        <div class="field full"><label>站点地址（必填，用于支付回调与全部邮件链接）</label><input class="input" type="text" name="site_url" value="<?= $oldEsc('site_url') ?: 'https://' ?>" placeholder="https://your-domain.com" required></div>
         <div class="field"><label>管理员密码</label><input class="input" type="password" name="admin_pass" minlength="8" maxlength="72" required></div>
         <div class="field"><label>确认管理员密码</label><input class="input" type="password" name="admin_pass2" minlength="8" maxlength="72" required></div>
       </div>
@@ -246,6 +247,18 @@ function install_render_check(string $err = '', array $old = []): void
 function install_run(): void
 {
     csrf_check();
+    /* 并发/重复提交防护：同一时刻只允许一个安装流程在跑（防 seed 重复导入产生重复演示数据） */
+    $lockFp = @fopen(NC_ROOT . '/storage/install.locking', 'c');
+    if ($lockFp === false || !flock($lockFp, LOCK_EX | LOCK_NB)) {
+        if ($lockFp !== false) {
+            fclose($lockFp);
+        }
+        install_render_check('检测到另一个安装流程正在进行，请稍后刷新本页重试。', []);
+        return;
+    }
+    ftruncate($lockFp, 0);
+    fwrite($lockFp, (string) time());
+    fflush($lockFp);
     $rows = install_requirements();
     if (!install_all_pass($rows)) {
         install_render_check('环境自检存在未通过项，请处理后重试。', []);
@@ -262,9 +275,19 @@ function install_run(): void
         'admin_pass' => (string) ($_POST['admin_pass'] ?? ''),
         'admin_pass2' => (string) ($_POST['admin_pass2'] ?? ''),
         'site_name' => trim((string) ($_POST['site_name'] ?? '')),
+        'site_url' => rtrim(trim((string) ($_POST['site_url'] ?? '')), '/'),
     ];
 
     $err = '';
+    /* 站点地址：scheme+公网域名/IP 严格校验；它是支付回调与邮件令牌链接的唯一来源（防 Host 头污染） */
+    $su = parse_url($in['site_url']);
+    if (!isset($su['scheme'], $su['host'])
+        || !in_array(strtolower((string) $su['scheme']), ['http', 'https'], true)
+        || strpos($in['site_url'], '@') !== false
+        || !function_exists('codepay_host_allowed')
+        || !codepay_host_allowed(strtolower((string) $su['host']))) {
+        $err = '站点地址格式不正确：请填写形如 https://your-domain.com 的公网地址';
+    }
     if (!preg_match('~^[A-Za-z0-9.\-_]{1,120}$~', $in['db_host'])) {
         $err = '数据库地址格式不正确';
     } elseif (!preg_match('~^[0-9]{1,5}$~', $in['db_port']) || (int) $in['db_port'] < 1 || (int) $in['db_port'] > 65535) {
@@ -293,7 +316,7 @@ function install_run(): void
         } catch (PDOException $e) {
             $msg = install_pdo_msg($e);
             if (strpos($msg, '1049') !== false || strpos(strtolower($msg), 'unknown database') !== false) {
-                $err = '数据库 ' . $in['db_name'] . ' 不存在：请先在宝塔「数据库」页面创建它（用户名可勾选“为数据库同步创建”），再回到本页安装。';
+                $err = '数据库 ' . $in['db_name'] . ' 不存在：请先在面板「数据库」页面创建它（用户名可勾选“为数据库同步创建”），再回到本页安装。';
             } elseif (strpos($msg, '1045') !== false || strpos(strtolower($msg), 'access denied') !== false) {
                 $err = '数据库账号或密码不正确（Access denied），请核对后重试。';
             } else {
@@ -326,6 +349,14 @@ function install_run(): void
                 $upd = $pdo->prepare('UPDATE settings SET svalue = ? WHERE skey = ?');
                 $upd->execute([$in['site_name'], 'site_name']);
             }
+            $u2 = $pdo->prepare('UPDATE settings SET svalue = ? WHERE skey = ?');
+            $u2->execute([$in['site_url'], 'site_url']);
+            try {
+                $u3 = $pdo->prepare('INSERT INTO settings (skey, svalue) VALUES (?, ?)');
+                $u3->execute(['site_url', $in['site_url']]);
+            } catch (PDOException $e) {
+                /* 已存在则上面的 UPDATE 已生效 */
+            }
         } catch (PDOException $e) {
             /* re-running install with the same admin is treated as idempotent */
             if (strpos((string) $e->getCode(), '23') !== 0 && strpos(strtolower($e->getMessage()), 'duplicate') === false) {
@@ -356,13 +387,23 @@ function install_run(): void
     foreach ($lines as $k => $v) {
         $pairs[] = $k . '=' . $v;
     }
-    file_put_contents(NC_ROOT . '/.env', implode("\n", $pairs) . "\n");
-    @chmod(NC_ROOT . '/.env', 0600);
-    file_put_contents(NC_ROOT . '/install.lock', json_encode([
+    /* 配置写入必须成功，否则假安装成功比失败更危险（.env 缺失站点起不来、lock 缺失向导不关闭） */
+    $envOk = @file_put_contents(NC_ROOT . '/.env', implode("\n", $pairs) . "\n");
+    if ($envOk !== false) {
+        @chmod(NC_ROOT . '/.env', 0600);
+    }
+    $lockOk = @file_put_contents(NC_ROOT . '/install.lock', json_encode([
         'installed_at' => date('Y-m-d H:i:s'),
         'version' => '1.0',
     ]));
-    @chmod(NC_ROOT . '/install.lock', 0644);
+    if ($lockOk !== false) {
+        @chmod(NC_ROOT . '/install.lock', 0644);
+    }
+    if ($envOk === false || $lockOk === false) {
+        $which = ($envOk === false ? '.env' : '') . ($envOk === false && $lockOk === false ? ' 与 ' : '') . ($lockOk === false ? 'install.lock' : '');
+        install_render_check('配置文件（' . $which . '）写入失败：请检查站点根目录写权限（Web 进程需可写）与磁盘空间后重试。', []);
+        return;
+    }
 
     install_render_done($lines['ADMIN_PATH'], $in['admin_user']);
 }
@@ -422,10 +463,10 @@ function install_render_done(string $adminPath, string $adminUser): void
     <h3 style="font-size:15px;margin:20px 0 8px;">接下来建议完成</h3>
     <ol class="ins-next">
       <li>立即打开管理后台地址并用管理员账号登录（建议再改一次密码）；</li>
-      <li>在宝塔「计划任务」中添加 Shell 脚本任务（按小时计费与流量重置依赖它们）：
-        <pre class="ins-code">* * * * * /www/server/php/74/bin/php 站点根目录/cron/bill.php
-5 0 * * * /www/server/php/74/bin/php 站点根目录/cron/traffic_reset.php</pre>
-        （把「站点根目录」替换为实际路径，如 /www/wwwroot/你的域名）
+      <li>在面板「计划任务」中添加 Shell 脚本任务（按小时计费与流量重置依赖它们）：
+        <pre class="ins-code">* * * * * php 站点根目录/cron/bill.php
+5 0 * * * php 站点根目录/cron/traffic_reset.php</pre>
+        （把「站点根目录」替换为实际路径，php 替换为面板所装 PHP 的实际路径）
       </li>
       <li>在「系统设置」配置支付渠道与 SMTP 邮件；</li>
       <li>在「节点管理」添加节点，执行生成的一键安装命令完成节点对接；</li>

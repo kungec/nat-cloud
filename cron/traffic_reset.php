@@ -23,6 +23,15 @@ try {
     db_exec('ALTER TABLE instances ADD COLUMN traffic_reset_at DATETIME NULL');
 }
 
+/* 先给节点下发计数清零任务：节点侧不清零的话，下一轮回报会用旧累计值覆盖掉刚清零的数据库 */
+$nodeRows = db_all('SELECT DISTINCT i.node_id FROM instances i WHERE i.node_id > 0 AND i.status != \'released\'');
+foreach ($nodeRows as $nr) {
+    $dup = (int) db_val("SELECT COUNT(*) FROM node_tasks WHERE node_id = ? AND action = 'traffic_reset' AND status IN ('pending','sent') AND created_at > DATE_SUB(NOW(), INTERVAL 1 DAY)", [(int) $nr['node_id']]);
+    if ($dup === 0) {
+        node_enqueue((int) $nr['node_id'], 'traffic_reset', []);
+    }
+}
+
 $today = new DateTimeImmutable('today');
 $reset = 0;
 $skipped = 0;

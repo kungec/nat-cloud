@@ -58,8 +58,7 @@ $contentWrapClass = 'settings-col';
     <div style="font-size:14.5px;font-weight:600;margin-bottom:12px;">开放 API</div>
     <?php $apiToken = trim((string) ($apiToken ?? '')); ?>
     <?php if ($apiToken !== ''): ?>
-      <div style="font-size:13.5px;color:var(--text-dim);line-height:1.9;">Bearer Token（等同于账户操作凭据，请妥善保管）：<br>
-        <input class="input" readonly value="<?= e($apiToken) ?>" style="font-family:var(--mono);font-size:12px;margin-top:6px;" onclick="this.select()"></div>
+      <div style="font-size:13.5px;color:var(--text-dim);line-height:1.9;">Token 状态：<b>已启用</b>（数据库仅存哈希，明文只在生成时展示一次；如遗失请重置）。</div>
       <div style="font-size:13px;color:var(--text-dim);margin-top:8px;line-height:1.9;">
         接口基地址：<code><?= e(codepay_site_base()) ?>/open/v1</code>，请求头携带 <code>Authorization: Bearer &lt;token&gt;</code>：<br>
         · GET /me · GET /instances · GET /instances/{name} · POST /instances/{name}/power {"action":"start|stop|reboot"}
@@ -69,7 +68,7 @@ $contentWrapClass = 'settings-col';
         <button class="btn btn-ghost btn-sm" type="submit">重置 Token</button>
       </form>
     <?php else: ?>
-      <div style="font-size:13.5px;color:var(--text-dim);">生成 Token 后可通过 HTTP 接口管理你的实例（查询 / 开关机 / 续费）。</div>
+      <div style="font-size:13.5px;color:var(--text-dim);">生成 Token 后可通过 HTTP 接口管理你的实例（查询账户 / 实例 / 远程开关机重启）。</div>
       <form method="post" action="/dashboard/settings/api-token" style="margin-top:10px;">
         <?= csrf_field() ?>
         <button class="btn btn-ghost btn-sm" type="submit">生成 API Token</button>

@@ -308,6 +308,11 @@ function dash_handle(string $path, string $method): void
         if (!$inst) {
             respond(view('errors/404', ['title' => '实例不存在']), 404);
         }
+        /* 已释放/部署中/失败实例禁止改 NAT：防止旧实例的异步任务改写新租户的转发表 */
+        if (in_array((string) $inst['status'], ['released', 'creating', 'failed'], true)) {
+            flash('err', '实例当前状态（' . $inst['status'] . '）不可管理端口转发。');
+            respond(view('dashboard/services', ['title' => '我的服务', 'rows' => [], 'tab' => '', 'page' => 1, 'pages' => 1, 'total' => 0]), 409);
+        }
         return $inst;
     };
     $renderNat = function (array $inst) {
@@ -375,6 +380,13 @@ function dash_handle(string $path, string $method): void
             }
             if (billing_plan_stock_left($plan) <= 0) {
                 $createErr('该套餐已售罄，请选择其他套餐。');
+            }
+            /* 服务端开台上限（原仅前端提示）：按量实例最多 5 台，防绕过 */
+            if (post_str('mode', 10) === 'hourly') {
+                $cnt = (int) db_val("SELECT COUNT(*) FROM instances WHERE uid = ? AND billing_mode = 'hourly' AND status IN ('running','overdue','creating')", [$uid]);
+                if ($cnt >= 5) {
+                    $createErr('按量计费实例最多同时持有 5 台。');
+                }
             }
             $img = post_str('image', 20);
             $mode = post_str('mode', 10) === 'hourly' ? 'hourly' : 'monthly';
@@ -478,8 +490,13 @@ function dash_handle(string $path, string $method): void
             echo '{"paid": false, "gone": true}';
             exit;
         }
-        if ($order['status'] !== 'pending') {
+        if ($order['status'] === 'paid') {
             echo '{"paid": true}';
+            exit;
+        }
+        if ($order['status'] !== 'pending') {
+            /* 已取消/过期/失败：明确告知已失效，而不是误报支付成功 */
+            echo '{"paid": false, "gone": true}';
             exit;
         }
         if ((float) ($order['usdt_amount'] ?? 0) <= 0) {
@@ -487,8 +504,7 @@ function dash_handle(string $path, string $method): void
             exit;
         }
         $tx = usdt_find_payment($order);
-        if ($tx !== null) {
-            usdt_credit_order($order, $tx);
+        if ($tx !== null && usdt_credit_order($order, $tx)) {
             echo '{"paid": true}';
             exit;
         }
@@ -639,7 +655,8 @@ function dash_handle(string $path, string $method): void
         respond(view('dashboard/tickets', ['title' => '工单', 'rows' => $rows, 'tab' => $tab, 'page' => $page, 'pages' => $pages, 'total' => $total]));
     }
     if ($path === '/dashboard/tickets/upload' && $method === 'POST') {
-        /* 工单图片上传：会话级暂存，建单后转移到正式目录 */
+        /* 工单图片上传：会话级暂存，建单后转移到正式目录（CSRF 经 X-Csrf-Token 头校验） */
+        csrf_check();
         $file = $_FILES['file'] ?? null;
         if (!$file || !is_uploaded_file($file['tmp_name'])) {
             json_out(['ok' => false, 'msg' => '未收到文件'], 400);
@@ -672,6 +689,42 @@ function dash_handle(string $path, string $method): void
         }
         chmod($target, 0640);
         json_out(['ok' => true, 'name' => $name]);
+    }
+    /* 工单暂存图预览：仅供当前会话读取自己的暂存目录 */
+    if ($path === '/dashboard/tickets/tmp-img' && $method === 'GET') {
+        $file = basename((string) ($_GET['f'] ?? ''));
+        /* 文件名白名单（固定前缀+16位十六进制+受限扩展名），从源头排除路径成分 */
+        if (!preg_match('~^img_[a-f0-9]{10}\.(png|jpg|gif|webp)$~', $file)) {
+            http_response_code(404);
+            exit;
+        }
+        $dir = (string) realpath(ticket_tmp_dir());
+        $fp = $dir . DIRECTORY_SEPARATOR . $file;
+        if ($dir === '' || !is_file($fp)) {
+            http_response_code(404);
+            exit;
+        }
+        $ext = pathinfo($file, PATHINFO_EXTENSION);
+        header('Content-Type: image/' . ($ext === 'jpg' ? 'jpeg' : $ext));
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: private, no-store');
+        readfile($fp);
+        exit;
+    }
+    /* 工单暂存图删除：仅限本人会话目录，防孤儿文件堆积 */
+    if ($path === '/dashboard/tickets/tmp-del' && $method === 'POST') {
+        csrf_check();
+        $file = basename((string) ($_GET['f'] ?? ''));
+        if (preg_match('~^img_[a-f0-9]{10}\.(png|jpg|gif|webp)$~', $file)) {
+            $dir = (string) realpath(ticket_tmp_dir());
+            $fp = $dir . DIRECTORY_SEPARATOR . $file;
+            if ($dir !== '' && is_file($fp)) {
+                @unlink($fp);
+            }
+        }
+        header('Content-Type: application/json; charset=utf-8');
+        echo '{"ok":true}';
+        exit;
     }
     if ($path === '/dashboard/tickets/new') {
         if ($method === 'GET') {
@@ -707,8 +760,8 @@ function dash_handle(string $path, string $method): void
         $ins->execute([$uid, $title, $category, $priority, $instanceId ?: null]);
         $ticketId = (int) db()->lastInsertId();
 
-        /* 转移会话暂存图片到正式工单目录 */
-        $tmpDir = NC_ROOT . '/storage/tmp/' . sha1(session_id());
+        /* 转移会话暂存图片到正式工单目录（与上传接口共用同一目录标识，此前两处目录算法不一致导致图片丢失） */
+        $tmpDir = ticket_tmp_dir();
         $dstDir = NC_ROOT . '/storage/tickets/' . $ticketId;
         $images = json_decode(post_str('images', 1000), true);
         if (is_array($images) && $images && is_dir($tmpDir)) {
@@ -872,9 +925,10 @@ function dash_handle(string $path, string $method): void
         csrf_check();
         openapi_ensure_columns();
         $token = bin2hex(random_bytes(32));
+        /* 数据库只存哈希：拖库/备份泄露无法直接还原 token */
         $upd = db()->prepare('UPDATE users SET api_token = ? WHERE id = ?');
-        $upd->execute([$token, $uid]);
-        flash('ok', 'API Token 已生成，请立即复制保存。');
+        $upd->execute([hash('sha256', $token), $uid]);
+        flash('ok', 'API Token 已生成：' . $token . '（仅此一次展示，请立即复制保存；旧 Token 已失效）');
         $settingsView();
     }
     if ($path === '/dashboard/settings/username' && $method === 'POST') {

@@ -101,7 +101,7 @@ function csrf_field(): string
 
 function csrf_check(): void
 {
-    $token = $_POST['_csrf'] ?? '';
+    $token = $_POST['_csrf'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
     if (!is_string($token) || $token === '' || empty($_SESSION['csrf']) || !hash_equals($_SESSION['csrf'], $token)) {
         http_response_code(419);
         echo '页面已过期，请刷新后重试。(CSRF token invalid)';
@@ -357,10 +357,25 @@ function mask_phone(string $phone): string
     return substr($phone, 0, 3) . str_repeat('*', $len - 7) . substr($phone, -4);
 }
 
-/* ---------- 敏感字段加密（实名信息） ---------- */
+/* ---------- 敏感字段加密（实名信息）----------
+ * APP_KEY 缺失时 fail-closed：拒绝加密（解密返回空串），
+ * 绝不回退到源码可见的固定密钥——那等于用公开钥匙锁保险柜。 */
+function secret_app_key(): ?string
+{
+    static $cached = null;
+    if ($cached === null) {
+        $key = trim((string) env('APP_KEY', ''));
+        $cached = ($key !== '' && !preg_match('~^0*$~', $key)) ? hash('sha256', $key, true) : null;
+    }
+    return $cached;
+}
+
 function secret_encrypt(string $plain): string
 {
-    $key = hash('sha256', env('APP_KEY', 'natcloud-fallback-key'), true);
+    $key = secret_app_key();
+    if ($key === null) {
+        throw new RuntimeException('APP_KEY 未配置，无法加密敏感数据');
+    }
     $iv = random_bytes(12);
     $tag = '';
     $cipher = openssl_encrypt($plain, 'aes-128-gcm', substr($key, 0, 16), OPENSSL_RAW_DATA, $iv, $tag);
@@ -369,16 +384,34 @@ function secret_encrypt(string $plain): string
 
 function secret_decrypt(string $encoded): string
 {
+    $key = secret_app_key();
+    if ($key === null) {
+        return '';
+    }
     $raw = base64_decode($encoded, true);
     if ($raw === false || strlen($raw) < 29) {
         return '';
     }
-    $key = hash('sha256', env('APP_KEY', 'natcloud-fallback-key'), true);
     $iv = substr($raw, 0, 12);
     $tag = substr($raw, 12, 16);
     $cipher = substr($raw, 28);
     $plain = openssl_decrypt($cipher, 'aes-128-gcm', substr($key, 0, 16), OPENSSL_RAW_DATA, $iv, $tag);
     return $plain === false ? '' : $plain;
+}
+
+/* ---------- 管理员可编辑 HTML（条款/隐私）的白名单清洗（输出前调用，防存储型 XSS） ---------- */
+function html_sanitize_basic(string $html): string
+{
+    /* 去脚本/样式/嵌入内容与其内容体 */
+    $html = preg_replace('~<(script|style|iframe|object|embed|form|link|meta)\b[^>]*>.*?</\1>~is', '', $html);
+    $html = preg_replace('~<(script|style|iframe|object|embed|form|link|meta)\b[^>]*/?>~i', '', $html);
+    /* 去各类内联事件与 javascript:/vbscript: URL */
+    $html = preg_replace('~\son[a-z]+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)~i', '', $html);
+    $html = preg_replace('~(href|src|action|background)\s*=\s*("|\')?\s*(javascript|vbscript|data(?!:image/))[^"\'>\s]*("|\')?~i', '$1="#"', $html);
+    /* 去危险属性与注释 */
+    $html = preg_replace('~\s(style|srcset|ping|formaction)\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)~i', '', $html);
+    $html = preg_replace('~<!--.*?-->~s', '', $html);
+    return (string) $html;
 }
 
 /* ---------- 随机单号 / 实例名 ---------- */

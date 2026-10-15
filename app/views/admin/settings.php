@@ -248,9 +248,6 @@
           <?php $kp = setting('kyc_provider', ''); ?>
           <option value="" <?= $kp === '' ? 'selected' : '' ?>>未配置（实名功能不可用）</option>
           <option value="jidian" <?= $kp === 'jidian' ? 'selected' : '' ?>>极点实名（支付宝人脸核身分发）</option>
-          <option value="alipay" <?= $kp === 'alipay' ? 'selected' : '' ?>>支付宝官方（人脸核身）</option>
-          <option value="wx" <?= $kp === 'wx' ? 'selected' : '' ?>>微信官方（人脸核身）</option>
-          <option value="zhijian" <?= $kp === 'zhijian' ? 'selected' : '' ?>>智简魔方</option>
         </select>
       </div>
 

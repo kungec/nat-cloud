@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /* NAT Cloud - 用户开放 API（/open/v1，Bearer Token 鉴权）
- * v1：实例列表 / 实例详情 / 开关机 / 续费。token 在控制台「账号与安全」生成。 */
+ * v1：实例列表 / 实例详情 / 开关机重启。token 在控制台「账号与安全」生成（仅存哈希）。 */
 
 function openapi_ensure_columns(): void
 {
@@ -29,8 +29,9 @@ function openapi_user_by_token(string $token): ?array
         return null;
     }
     openapi_ensure_columns();
+    /* 数据库只存 token 的 SHA-256，明文仅在生成时展示一次 */
     $stmt = db()->prepare('SELECT id, username, email, balance, status FROM users WHERE api_token = ? AND status = 1 LIMIT 1');
-    $stmt->execute([$token]);
+    $stmt->execute([hash('sha256', $token)]);
     $u = $stmt->fetch();
     return $u ?: null;
 }
@@ -39,6 +40,9 @@ function openapi_json($data, int $status = 200): void
 {
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
+    /* 个性化 Bearer API 响应禁止任何缓存（防代理/CDN 串户泄露余额与实例信息） */
+    header('Cache-Control: private, no-store');
+    header('Vary: Authorization');
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -131,7 +135,8 @@ function openapi_handle(string $path, string $method): void
         $status = (string) $inst['status'];
         $apply = null;
         if ($action === 'start' && $status === 'stopped') {
-            $apply = "UPDATE instances SET status = 'running', stopped_at = NULL WHERE id = " . (int) $inst['id'];
+            /* 与控制台开机路径一致：重置按量计费起点，避免把停机期间计入扣费 */
+            $apply = "UPDATE instances SET status = 'running', stopped_at = NULL, last_billed_at = NOW() WHERE id = " . (int) $inst['id'];
         } elseif ($action === 'stop' && $status === 'running') {
             $apply = "UPDATE instances SET status = 'stopped', stopped_at = NOW() WHERE id = " . (int) $inst['id'];
         } elseif ($action === 'reboot' && $status === 'running') {
@@ -143,7 +148,8 @@ function openapi_handle(string $path, string $method): void
             db_exec($apply);
         }
         if ((int) $inst['node_id'] > 0) {
-            node_enqueue((int) $inst['node_id'], $action, ['name' => $inst['name']]);
+            /* 节点脚本的动作名是 restart（reboot 需映射，否则节点收到未知动作永不执行） */
+            node_enqueue((int) $inst['node_id'], $action === 'reboot' ? 'restart' : $action, ['name' => $inst['name']]);
         }
         openapi_json(['ok' => true, 'name' => $inst['name'], 'action' => $action, 'status' => $apply !== null ? ($action === 'start' ? 'running' : 'stopped') : $status]);
     }

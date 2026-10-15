@@ -9,7 +9,7 @@
 #   * 节点不开任何入站管理端口，一切管理经由网站管理后台
 #     （管理员登录）+ 每节点独立密钥（X-Node-Key）完成。
 #
-# 支持动作：create / start / stop / restart / rebuild / delete
+# 支持动作：create / start / stop / restart / rebuild / delete / nat / console / password / traffic_reset
 # ============================================================
 set -u
 umask 077
@@ -227,6 +227,15 @@ t_stop() {
   [ "$(lxc-info -n "$1" -sH 2>/dev/null)" != "RUNNING" ]
 }
 t_restart() { t_stop "$1" && t_start "$1"; }
+# 周期流量清零：把所有实例的累计计数归零（网站侧每月到达订购日时下发，与 DB 重置配套）
+t_traffic_reset() {
+  local f
+  for f in "$STATE"/*.traffic; do
+    [ -f "$f" ] || continue
+    printf '0 0 0 0' > "$f"
+  done
+  return 0
+}
 t_rebuild() { # 参数同 create
   local name="$1"; shift
   valid_name "$name" || return 1
@@ -240,10 +249,23 @@ t_delete() {
   lxc-stop -n "$name" -k 2>/dev/null
   sleep 1
   umount "$MNT/$name" 2>/dev/null; umount "$LXC/$name/rootfs" 2>/dev/null
-  losetup -D 2>/dev/null || true
+  # 只解绑本实例 disk.img 占用的 loop 设备；绝不可用 losetup -D（会拆掉整台主机所有 loop 设备）
+  local ld
+  ld=$(losetup -j "$LXC/$name/disk.img" 2>/dev/null | head -n1 | cut -d: -f1)
+  [ -n "$ld" ] && losetup -d "$ld" 2>/dev/null
   rm -rf "$LXC/$name" && rm -f "$STATE/$name.traffic" && rm -rf "$MNT/$name"
   [ -n "$octet" ] && valid_num 2 "$octet" && del_nat_rules "$octet"
   return 0
+}
+
+# 容器间二层/三层隔离（多租户硬要求）：禁止容器经 lxcbr0 互相访问，
+# 不影响「容器↔外网 DNAT/转发」与「宿主机↔容器」。幂等，每轮 sync 校准一次。
+net_isolate() {
+  # 让桥接流量也经过 iptables FORWARD（ebtables 缺失时的替代方案）
+  modprobe br_netfilter 2>/dev/null
+  [ -e /proc/sys/net/bridge/bridge-nf-call-iptables ] && echo 1 > /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null
+  iptables -C FORWARD -i lxcbr0 -o lxcbr0 -j DROP 2>/dev/null || \
+    iptables -I FORWARD 1 -i lxcbr0 -o lxcbr0 -j DROP 2>/dev/null
 }
 
 # ---------- 双向流量计量（宿主 veth 计数，容器重启累计不丢） ----------
@@ -342,6 +364,7 @@ cmd_sync() {
     tail -c 1048576 "$LOGFILE" > "$LOGFILE.tmp" && mv "$LOGFILE.tmp" "$LOGFILE"
   fi
   log "sync 开始"
+  net_isolate
   local resp ok
   resp=$(api_get node_sync)
   ok=$(echo "$resp" | jq -r '.ok // false' 2>/dev/null)
@@ -374,6 +397,8 @@ cmd_sync() {
       start)    t_start "$name"   && okk=1 || detail="启动失败" ;;
       stop)     t_stop "$name"    && okk=1 || detail="停止失败" ;;
       restart)  t_restart "$name" && okk=1 || detail="重启失败" ;;
+      reboot)   t_restart "$name" && okk=1 || detail="重启失败" ;;
+      traffic_reset) t_traffic_reset && okk=1 || detail="流量清零失败" ;;
       delete)   octet=$(echo "$p" | jq -r '.payload.ip_octet // empty'); t_delete "$name" "$octet" && okk=1 || detail="删除失败" ;;
       password) t_password "$name" "$(echo "$p" | jq -r '.payload.rootpw')" && okk=1 || detail="重置密码失败" ;;
       console)

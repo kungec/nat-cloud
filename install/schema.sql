@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS `instances` (
   `traffic_tx` bigint(20) NOT NULL DEFAULT 0,
   `node_state` varchar(16) NOT NULL DEFAULT '',
   `cycle` varchar(12) NOT NULL DEFAULT 'monthly',
+  `remind_level` tinyint(4) NOT NULL DEFAULT 0,
   `vnc_token` varchar(32) DEFAULT '',
   `vnc_expire_at` datetime DEFAULT NULL,
   `traffic_reset_at` datetime DEFAULT NULL,
@@ -184,6 +185,8 @@ CREATE TABLE IF NOT EXISTS `nodes` (
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `images` text,
   `sort` int(11) NOT NULL DEFAULT 0,
+  `last_seen` datetime DEFAULT NULL,
+  `metrics_json` text,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -201,6 +204,7 @@ CREATE TABLE IF NOT EXISTS `orders` (
   `paid_at` datetime DEFAULT NULL,
   `usdt_amount` decimal(12,4) DEFAULT NULL,
   `usdt_tx` varchar(90) DEFAULT NULL,
+  UNIQUE KEY `uq_usdt_tx` (`usdt_tx`),
   PRIMARY KEY (`id`),
   UNIQUE KEY `order_no` (`order_no`),
   KEY `idx_ord_uid` (`uid`,`type`,`status`),
@@ -315,7 +319,14 @@ CREATE TABLE IF NOT EXISTS `users` (
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `last_login_at` datetime DEFAULT NULL,
   `last_ip` varchar(45) DEFAULT NULL,
+  `api_token` char(64) DEFAULT NULL,
+  `ref_code` varchar(16) DEFAULT NULL,
+  `ref_by` int(10) unsigned DEFAULT NULL,
+  `tg_chat_id` bigint(20) DEFAULT NULL,
+  `tg_bind_code` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `username` (`username`),
-  UNIQUE KEY `email` (`email`)
+  UNIQUE KEY `email` (`email`),
+  UNIQUE KEY `uq_api_token` (`api_token`),
+  UNIQUE KEY `uq_ref_code` (`ref_code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

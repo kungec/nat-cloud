@@ -43,6 +43,9 @@
       <div class="pcard-actions">
         <button class="btn btn-ghost btn-sm" type="button" data-install-key="<?= e($n['node_key']) ?>">安装命令</button>
         <button class="btn btn-ghost btn-sm" type="button" data-modal-open="nodeEdit<?= (int) $n['id'] ?>">编辑</button>
+        <form class="inline-form" method="post" action="/admin/nodes/<?= (int) $n['id'] ?>/rekey" data-confirm="确认重置通信密钥？旧密钥立即失效，须在节点上重新执行新的安装命令。"><?= csrf_field() ?>
+          <button class="btn btn-ghost btn-sm" type="submit">重置密钥</button>
+        </form>
         <form class="inline-form" method="post" action="/admin/nodes/<?= (int) $n['id'] ?>/delete" data-confirm="确认删除该节点？仍有实例时会自动改为停用。"><?= csrf_field() ?>
           <button class="btn btn-danger btn-sm" type="submit">删除</button>
         </form>

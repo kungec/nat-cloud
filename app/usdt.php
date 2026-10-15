@@ -43,6 +43,12 @@ function usdt_ensure_columns(): void
             db_exec($alter);
         }
     }
+    /* 一笔链上交易只能被一个订单认领（P1-10）：NULL 可重复，非空唯一 */
+    try {
+        db_exec('ALTER TABLE orders ADD UNIQUE KEY uq_usdt_tx (usdt_tx)');
+    } catch (Throwable $e) {
+        /* 索引已存在 */
+    }
 }
 
 /** 人民币金额 → 应付 USDT 数量（两位小数） */
@@ -63,9 +69,9 @@ function usdt_find_payment(array $order): ?string
     if ($addr === '' || $expect <= 0) {
         return null;
     }
-    $createdMs = (strtotime((string) $order['created_at']) - 120) * 1000;
+    $createdMs = (strtotime((string) $order['created_at']) - 30) * 1000;
     $url = 'https://api.trongrid.io/v1/accounts/' . rawurlencode($addr) . '/transactions/trc20'
-         . '?limit=50&min_timestamp=' . $createdMs . '&contract_address=' . USDT_CONTRACT;
+         . '?limit=200&min_timestamp=' . $createdMs . '&contract_address=' . USDT_CONTRACT;
     $ctx = stream_context_create(['http' => ['timeout' => 10, 'header' => "Accept: application/json\r\n"]]);
     $raw = @file_get_contents($url, false, $ctx);
     if ($raw === false || $raw === '') {
@@ -102,7 +108,9 @@ function usdt_find_payment(array $order): ?string
     return null;
 }
 
-/** 到账入账（事务 + 幂等）：订单已处理时也返回 true */
+/** 到账入账（事务 + 幂等）：订单已处理时也返回 true。
+ *  认领条件含 status='pending' AND usdt_tx IS NULL，配合 uq_usdt_tx 唯一索引，
+ *  保证同一笔链上交易在并发下也只会被一个订单原子认领。 */
 function usdt_credit_order(array $order, string $txid): bool
 {
     db()->beginTransaction();
@@ -114,8 +122,12 @@ function usdt_credit_order(array $order, string $txid): bool
             db()->rollBack();
             return true; /* 已被处理，视为成功 */
         }
-        $upd = db()->prepare("UPDATE orders SET status = 'paid', paid_at = NOW(), usdt_tx = ? WHERE id = ?");
+        $upd = db()->prepare("UPDATE orders SET status = 'paid', paid_at = NOW(), usdt_tx = ? WHERE id = ? AND usdt_tx IS NULL");
         $upd->execute([$txid, (int) $order['id']]);
+        if ($upd->rowCount() !== 1) {
+            db()->rollBack();
+            return false; /* 该交易已被其他订单认领 */
+        }
         $st = db()->prepare('UPDATE users SET balance = balance + ? WHERE id = ?');
         $st->execute([(float) $fresh['amount'], $fresh['uid']]);
         $st = db()->prepare('SELECT balance FROM users WHERE id = ?');

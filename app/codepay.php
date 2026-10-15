@@ -74,7 +74,8 @@ function codepay_endpoint(string $path): string
     return $c['url'] . $path;
 }
 
-/** 站点对外基础地址：优先取后台配置 site_url，否则按当前请求推断（用于 notify_url） */
+/** 站点对外基础地址：优先取后台配置 site_url；未配置时按当前请求推断，
+ *  但 Host 必须通过公网域名/IP 校验（防 Host 头污染把带令牌的邮件链接指向攻击者域名） */
 function codepay_site_base(): string
 {
     $configured = trim(setting('site_url', ''));
@@ -83,8 +84,8 @@ function codepay_site_base(): string
     }
     $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
         || strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
-    $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
-    if ($host === '') {
+    $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
+    if ($host === '' || !codepay_host_allowed($host)) {
         return '';
     }
     return ($https ? 'https://' : 'http://') . $host;

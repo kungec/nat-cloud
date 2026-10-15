@@ -95,6 +95,12 @@ function smtp_expect($fp, string $prefix): bool
     return strpos($resp, $prefix) === 0;
 }
 
+/** SMTP 头值消毒：剥离 CR/LF 与控制字符，杜绝后台配置项注入额外邮件头 */
+function mail_header_clean(string $v): string
+{
+    return (string) preg_replace('~[\x00-\x1f\x7f]+~', '', $v);
+}
+
 /**
  * 发送 HTML 邮件（SMTP）。
  * 返回 [bool 是否成功, string 失败原因]。
@@ -108,8 +114,10 @@ function mail_send(string $to, string $subject, string $html): array
     }
     $user = trim(setting('smtp_user', ''));
     $pass = secret_decrypt(trim(setting('smtp_pass', '')));
-    $from = trim(setting('smtp_from', '') !== '' ? setting('smtp_from', '') : $user);
-    $fromName = setting('smtp_fromname', '') !== '' ? setting('smtp_fromname', '') : setting('site_name', 'NAT Cloud');
+    $from = mail_header_clean(trim(setting('smtp_from', '') !== '' ? setting('smtp_from', '') : $user));
+    $fromName = mail_header_clean(setting('smtp_fromname', '') !== '' ? setting('smtp_fromname', '') : setting('site_name', 'NAT Cloud'));
+    $to = mail_header_clean($to);
+    $subject = mail_header_clean($subject);
     $enc = strtolower(setting('smtp_encrypt', 'ssl'));
 
     if ($host === '' || $from === '') {

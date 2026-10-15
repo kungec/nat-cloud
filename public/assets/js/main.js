@@ -184,12 +184,17 @@
         x.type = "button"; x.textContent = "×";
         x.onclick = function () {
           uploaded = uploaded.filter(function (n) { return n !== name; });
-          fetch("/dashboard/tickets/tmp-del?f=" + encodeURIComponent(name), { method: "POST" });
+          fetch("/dashboard/tickets/tmp-del?f=" + encodeURIComponent(name), { method: "POST", credentials: "include",
+            headers: { "X-Csrf-Token": csrfToken() } });
           syncImages(); renderThumbs();
         };
         d.appendChild(img); d.appendChild(x);
         upThumbs.appendChild(d);
       });
+    }
+    function csrfToken() {
+      var el = document.querySelector('input[name="_csrf"]');
+      return el ? el.value : "";
     }
     function uploadFiles(list) {
       Array.from(list).forEach(function (f) {
@@ -197,7 +202,8 @@
         if (f.size > 5 * 1024 * 1024) { alert("每张图片不超过 5 MB"); return; }
         var fd = new FormData();
         fd.append("file", f);
-        fetch("/dashboard/tickets/upload", { method: "POST", body: fd, credentials: "include" })
+        fetch("/dashboard/tickets/upload", { method: "POST", body: fd, credentials: "include",
+          headers: { "X-Csrf-Token": csrfToken() } })
           .then(function (r) { return r.json(); })
           .then(function (j) {
             if (j.ok) { uploaded.push(j.name); syncImages(); renderThumbs(); }

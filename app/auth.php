@@ -137,11 +137,13 @@ function auth_sessions(int $userId, int $isAdmin): array
     return $rows;
 }
 
-/* ---------- 登录尝试限速（按 IP + 账号，10分钟窗口） ---------- */
-function auth_recent_failures(string $account, string $ip): int
+/* ---------- 登录尝试限速（账号与 IP 分维度，10分钟窗口）----------
+ * 账号维度阈值低（针对单账号爆破），IP 维度阈值高（避免共享出口 IP/NAT 用户被连带锁死）。 */
+function auth_failure_count(string $field, string $value): int
 {
-    $stmt = db()->prepare('SELECT COUNT(*) FROM auth_failures WHERE (account = ? OR ip = ?) AND created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)');
-    $stmt->execute([mb_substr($account, 0, 120), $ip]);
+    $col = $field === 'ip' ? 'ip' : 'account';
+    $stmt = db()->prepare("SELECT COUNT(*) FROM auth_failures WHERE $col = ? AND created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)");
+    $stmt->execute([mb_substr($value, 0, 120)]);
     return (int) $stmt->fetchColumn();
 }
 
@@ -149,6 +151,10 @@ function auth_record_failure(string $account, string $ip): void
 {
     $stmt = db()->prepare('INSERT INTO auth_failures (account, ip, created_at) VALUES (?, ?, NOW())');
     $stmt->execute([mb_substr($account, 0, 120), $ip]);
+    /* 顺手 TTL 清理（约 2% 概率触发）：防表无限膨胀拖垮索引与磁盘 */
+    if (random_int(1, 50) === 1) {
+        db_exec('DELETE FROM auth_failures WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)');
+    }
 }
 
 function auth_clear_failures(string $account): void

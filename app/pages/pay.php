@@ -7,25 +7,29 @@ declare(strict_types=1);
    /pay/wx/notify    ：微信官方 Native 异步通知，APIv3 公钥验签 + AES-GCM 解密。
    三者共用 pay_credit_order() 幂等入账。 */
 
-/** 幂等入账：订单 pending → paid 并加余额、写流水。返回是否本次实际入账。 */
-function pay_credit_order(string $orderNo, float $amount, string $tradeNo, string $remark): bool
+/**
+ * 幂等入账：订单 pending → paid 并加余额、写流水。
+ * 返回状态：credited=本次实际入账 / duplicate=重复通知（已入账过）/
+ *          mismatch=金额不符 / error=数据库故障（网关应重试）。
+ */
+function pay_credit_order(string $orderNo, float $amount, string $tradeNo, string $remark): string
 {
     if (!preg_match('~^\d{14}[0-9A-F]{6}$~', $orderNo)) {
-        return false;
+        return 'mismatch';
     }
     db()->beginTransaction();
     try {
-        $stmt = db()->prepare("SELECT * FROM orders WHERE order_no = ? AND type = 'topup' AND status = 'pending' FOR UPDATE");
+        $stmt = db()->prepare("SELECT * FROM orders WHERE order_no = ? AND type = 'topup' FOR UPDATE");
         $stmt->execute([$orderNo]);
         $order = $stmt->fetch();
-        if (!$order) {
+        if (!$order || $order['status'] !== 'pending') {
             /* 已处理或不存在：幂等确认，防止网关重复推送 */
             db()->rollBack();
-            return false;
+            return $order ? 'duplicate' : 'mismatch';
         }
         if (abs((float) $order['amount'] - $amount) > 0.01) {
             db()->rollBack();
-            return false;
+            return 'mismatch';
         }
         $upd = db()->prepare("UPDATE orders SET status = 'paid', paid_at = NOW() WHERE id = ?");
         $upd->execute([$order['id']]);
@@ -37,14 +41,25 @@ function pay_credit_order(string $orderNo, float $amount, string $tradeNo, strin
         $ins = db()->prepare("INSERT INTO transactions (uid, type, amount, balance_after, remark, created_at) VALUES (?, 'topup', ?, ?, ?, NOW())");
         $ins->execute([$order['uid'], (float) $order['amount'], $after, $remark]);
         db()->commit();
-        ref_award_on_topup((int) $order['uid'], (float) $order['amount']);
-        return true;
+        try {
+            ref_award_on_topup((int) $order['uid'], (float) $order['amount']);
+        } catch (Throwable $e) {
+            /* 返佣失败不影响入账 */
+        }
+        return 'credited';
     } catch (Throwable $e) {
         if (db()->inTransaction()) {
             db()->rollBack();
         }
-        return false;
+        return 'error';
     }
+}
+
+/** 码支付协议：仅 success 会停止重试；其余文本网关将继续通知（用于真实失败等待恢复后重试） */
+function codepay_notify_reply(string $status): void
+{
+    echo $status === 'credited' || $status === 'duplicate' ? 'success' : 'retry later';
+    exit;
 }
 
 function pay_handle(string $path, string $method): void
@@ -74,9 +89,7 @@ function pay_handle(string $path, string $method): void
         $orderNo = trim((string) ($params['out_trade_no'] ?? ''));
         $tradeNo = trim((string) ($params['trade_no'] ?? ''));
         $money = (float) ($params['money'] ?? 0);
-        pay_credit_order($orderNo, $money, $tradeNo, '在线充值到账 单号' . $orderNo . ($tradeNo !== '' ? ' 流水号' . $tradeNo : ''));
-        echo 'success';
-        exit;
+        codepay_notify_reply(pay_credit_order($orderNo, $money, $tradeNo, '在线充值到账 单号' . $orderNo . ($tradeNo !== '' ? ' 流水号' . $tradeNo : '')));
     }
 
     /* ---------- 支付宝当面付 ---------- */
@@ -100,8 +113,9 @@ function pay_handle(string $path, string $method): void
         $orderNo = trim((string) ($params['out_trade_no'] ?? ''));
         $tradeNo = trim((string) ($params['trade_no'] ?? ''));
         $money = (float) ($params['total_amount'] ?? 0);
-        pay_credit_order($orderNo, $money, $tradeNo, '支付宝充值到账 单号' . $orderNo . ($tradeNo !== '' ? ' 流水号' . $tradeNo : ''));
-        echo 'success';
+        $status = pay_credit_order($orderNo, $money, $tradeNo, '支付宝充值到账 单号' . $orderNo . ($tradeNo !== '' ? ' 流水号' . $tradeNo : ''));
+        /* 支付宝协议：仅 'success' 停止重试 */
+        echo $status === 'credited' || $status === 'duplicate' ? 'success' : 'failure';
         exit;
     }
 
@@ -139,8 +153,13 @@ function pay_handle(string $path, string $method): void
         $orderNo = trim((string) ($data['out_trade_no'] ?? ''));
         $tradeNo = trim((string) ($data['transaction_id'] ?? ''));
         $money = ((int) ($data['amount']['total'] ?? 0)) / 100;
-        pay_credit_order($orderNo, $money, $tradeNo, '微信充值到账 单号' . $orderNo . ($tradeNo !== '' ? ' 流水号' . $tradeNo : ''));
-        echo json_encode(['code' => 'SUCCESS']);
+        $status = pay_credit_order($orderNo, $money, $tradeNo, '微信充值到账 单号' . $orderNo . ($tradeNo !== '' ? ' 流水号' . $tradeNo : ''));
+        if ($status === 'credited' || $status === 'duplicate') {
+            echo json_encode(['code' => 'SUCCESS']);
+        } else {
+            /* 微信协议：FAIL 会触发官方重试通知 */
+            $fail('入账暂时失败，请等待重试');
+        }
         exit;
     }
 

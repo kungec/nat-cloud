@@ -14,9 +14,10 @@ function auth_handle(string $path, string $method): void
         }
         /* POST 登录 */
         csrf_check();
+        $accountPre = post_str('account', 120);
         if (!captcha_check()) {
             flash('err', '图形验证码不正确。');
-            respond(view('auth/login', ['title' => '登录', 'old' => $old]), 422);
+            respond(view('auth/login', ['title' => '登录', 'old' => ['account' => $accountPre]]), 422);
         }
         $account = post_str('account', 120);
         $password = isset($_POST['password']) && is_string($_POST['password']) ? $_POST['password'] : '';
@@ -27,7 +28,7 @@ function auth_handle(string $path, string $method): void
             flash('err', '请输入账号和密码。');
             respond(view('auth/login', ['title' => '登录', 'old' => $old]), 422);
         }
-        if (auth_recent_failures($account, client_ip()) >= 8) {
+        if (auth_failure_count('account', $account) >= 10 || auth_failure_count('ip', client_ip()) >= 20) {
             flash('err', '失败次数过多，请 10 分钟后再试。');
             respond(view('auth/login', ['title' => '登录', 'old' => $old]), 429);
         }
@@ -73,7 +74,7 @@ function auth_handle(string $path, string $method): void
         $refCode = strtoupper(trim(post_str('ref', 16)));
         if (!captcha_check()) {
             flash('err', '图形验证码不正确。');
-            respond(view('auth/register', ['title' => '免费注册', 'old' => $old]), 422);
+            respond(view('auth/register', ['title' => '免费注册', 'old' => ['username' => post_str('username', 32), 'email' => post_str('email', 120)]]), 422);
         }
         if (setting('register_enabled', '1') !== '1') {
             flash('err', '当前已关闭注册，请联系管理员。');
@@ -118,6 +119,10 @@ function auth_handle(string $path, string $method): void
         $ins->execute([$username, $email, password_hash($password, PASSWORD_DEFAULT), $needVerify ? 0 : 1, $refBy]);
         $uid = (int) db()->lastInsertId();
         if ($needVerify) {
+            if (site_base_url() === '') {
+                flash('err', '注册成功，但站点地址未配置，无法发送验证邮件。请管理员在后台「系统设置 → 站点地址」配置后再重发。');
+                respond(view('auth/verify_sent', ['title' => '验证邮件', 'email' => $email]), 202);
+            }
             mail_ensure_tables();
             $token = bin2hex(random_bytes(16));
             $ins = db()->prepare('INSERT INTO email_verifies (uid, email, token, expires_at) VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 48 HOUR))');
@@ -183,6 +188,10 @@ function auth_handle(string $path, string $method): void
                 flash('err', '发送过于频繁，请 1 小时后再试。');
                 respond(view('auth/resend', ['title' => '重发验证邮件', 'old' => ['email' => $email]]), 429);
             }
+            if (site_base_url() === '') {
+                flash('err', '站点地址未配置，无法发送验证邮件。请联系管理员在后台配置站点地址。');
+                respond(view('auth/resend', ['title' => '重发验证邮件', 'old' => ['email' => $email]]), 503);
+            }
             mail_ensure_tables();
             $token = bin2hex(random_bytes(16));
             $ins = db()->prepare('INSERT INTO email_verifies (uid, email, token, expires_at) VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL 48 HOUR))');
@@ -233,6 +242,10 @@ function auth_handle(string $path, string $method): void
         /* 不暴露账号是否存在：一律同一提示 */
         $msg = '如果该邮箱已注册，重置链接已发送，请查收（30 分钟内有效）。';
         if ($u) {
+            if (site_base_url() === '') {
+                flash('err', '站点地址未配置，无法发送重置邮件。请联系管理员在后台「系统设置 → 站点地址」配置。');
+                respond(view('auth/forgot', ['title' => '找回密码', 'old' => ['email' => $email]]), 503);
+            }
             $cnt = (int) db_val('SELECT COUNT(*) FROM password_resets WHERE email = ? AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)', [$email]);
             if ($cnt >= 3) {
                 flash('err', '发送过于频繁，请 1 小时后再试。');
@@ -287,13 +300,29 @@ function auth_handle(string $path, string $method): void
             flash('err', '两次输入的密码不一致。');
             respond(view('auth/reset', ['title' => '设置新密码', 'resetToken' => $token, 'resetEmail' => $row['email']]), 422);
         }
-        $upd = db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
-        $upd->execute([password_hash($password, PASSWORD_DEFAULT), (int) $row['uid']]);
-        $done = db()->prepare('UPDATE password_resets SET used = 1 WHERE id = ?');
-        $done->execute([(int) $row['id']]);
-        /* 重置成功后强制该账号所有已登录设备下线 */
-        $wipe = db()->prepare('DELETE FROM login_tokens WHERE user_id = ? AND is_admin = 0');
-        $wipe->execute([(int) $row['uid']]);
+        /* 原子消费令牌：仅第一个 used=0→1 的请求获胜，杜绝并发重放同一重置链接 */
+        db()->beginTransaction();
+        try {
+            $claim = db()->prepare('UPDATE password_resets SET used = 1 WHERE id = ? AND used = 0');
+            $claim->execute([(int) $row['id']]);
+            if ($claim->rowCount() !== 1) {
+                db()->rollBack();
+                flash('err', '该重置链接已被使用，请重新申请找回密码。');
+                respond(view('auth/forgot', ['title' => '找回密码', 'old' => []]), 422);
+            }
+            $upd = db()->prepare('UPDATE users SET password_hash = ?, api_token = NULL WHERE id = ?');
+            $upd->execute([password_hash($password, PASSWORD_DEFAULT), (int) $row['uid']]);
+            /* 重置成功后强制该账号所有已登录设备下线 */
+            $wipe = db()->prepare('DELETE FROM login_tokens WHERE user_id = ? AND is_admin = 0');
+            $wipe->execute([(int) $row['uid']]);
+            db()->commit();
+        } catch (Throwable $e) {
+            if (db()->inTransaction()) {
+                db()->rollBack();
+            }
+            flash('err', '重置失败，请稍后重试。');
+            respond(view('auth/forgot', ['title' => '找回密码', 'old' => []]), 500);
+        }
         flash('ok', '密码已重置，请使用新密码登录。');
         respond(view('auth/login', ['title' => '登录', 'old' => []]));
     }

@@ -26,6 +26,10 @@ function api_node_auth(): ?array
 
 function api_node(): void
 {
+    /* 节点接口全部为敏感数据（任务 payload/容器密码/指标），禁止任何中间层缓存，
+       且缓存键必须区分节点密钥（防 CDN 按 URL 缓存把 A 节点的任务串给 B 节点） */
+    header('Cache-Control: no-store, no-cache, must-revalidate, private');
+    header('Vary: X-Node-Key');
     $f = $_GET['f'] ?? '';
     if ($f === 'node_install') {
         api_node_install();
@@ -42,13 +46,13 @@ function api_node(): void
     json_out(['ok' => false, 'msg' => 'unknown function']);
 }
 
-/* 按 key 查节点（含停用节点——安装阶段可能尚未启用） */
+/* 按 key 查节点（安装/代理脚本下发：节点须处于启用状态，禁用即吊销其取脚本能力） */
 function api_node_by_key(string $key): ?array
 {
     if (!preg_match('~^[a-f0-9]{32,64}$~', $key)) {
         return null;
     }
-    $stmt = db()->prepare('SELECT * FROM nodes WHERE node_key = ? LIMIT 1');
+    $stmt = db()->prepare('SELECT * FROM nodes WHERE node_key = ? AND status = 1 LIMIT 1');
     $stmt->execute([$key]);
     return $stmt->fetch() ?: null;
 }
@@ -77,10 +81,18 @@ function api_node_install(): void
     if (!$node) {
         json_out(['ok' => false, 'msg' => 'auth failed'], 403);
     }
+    /* 模板占位符取值全部走严格白名单校验，杜绝注入 root 执行的一键安装脚本 */
     $site = site_base_url();
     $key = (string) ($_GET['key'] ?? '');
     $pubIp = (string) $node['pub_ip'];
     $netPrefix = (string) $node['net_prefix'];
+    $parts = parse_url($site);
+    if ($site === '' || !isset($parts['host']) || !in_array(strtolower((string) ($parts['scheme'] ?? '')), ['http', 'https'], true)) {
+        json_out(['ok' => false, 'msg' => 'site url invalid: 请先在后台配置站点地址（site_url）'], 500);
+    }
+    if (!filter_var($pubIp, FILTER_VALIDATE_IP) || !preg_match('~^\d{1,3}(\.\d{1,3}){2}$~', $netPrefix)) {
+        json_out(['ok' => false, 'msg' => 'node network config invalid'], 500);
+    }
     $script = <<<'INSTALLER'
 #!/bin/bash
 # ============================================================
@@ -135,9 +147,9 @@ golden_build() { # $1=目标镜像名（默认 debian12）。任一环节失败�
   mkdir -p /opt/natnode/golden
   lxc-destroy -n nc-gbuild >/dev/null 2>&1 || true
 
-  # 方法一：官方模板源（lxc-download，自带签名校验关闭的快速通道）
+  # 方法一：官方模板源（lxc-download，默认开启 GPG 签名校验，校验失败自动跳过）
   echo "尝试源 1：images.linuxcontainers.org ..."
-  if lxc-create -n nc-gbuild -t download -- --no-validate -d debian -r bookworm -a amd64 >/dev/null 2>&1; then
+  if lxc-create -n nc-gbuild -t download -- -d debian -r bookworm -a amd64 >/dev/null 2>&1; then
     mkdir -p "$G"
     cp -a /var/lib/lxc/nc-gbuild/rootfs/. "$G"/ || { lxc-destroy -n nc-gbuild >/dev/null 2>&1 || true; return 1; }
     lxc-destroy -n nc-gbuild >/dev/null 2>&1 || true
@@ -204,23 +216,32 @@ function api_node_sync(): void
     /* 超过10分钟仍未回报的 sent 任务重新入队（节点执行中崩溃的自愈） */
     db_exec("UPDATE node_tasks SET status = 'pending' WHERE node_id = ? AND status = 'sent' AND created_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)", [$node['id']]);
 
-    $stmt = db()->prepare("SELECT id, action, payload FROM node_tasks WHERE node_id = ? AND status = 'pending' ORDER BY id ASC LIMIT 20");
-    $stmt->execute([$node['id']]);
-    $rows = $stmt->fetchAll();
+    /* 原子领任务：事务内 FOR UPDATE 锁定再置 sent，两个并发 sync 不会取到同一批任务 */
     $tasks = [];
-    $ids = [];
-    foreach ($rows as $r) {
-        $payload = json_decode($r['payload'], true);
-        if (!is_array($payload)) {
-            $payload = new stdClass();
+    db()->beginTransaction();
+    try {
+        $stmt = db()->prepare("SELECT id, action, payload FROM node_tasks WHERE node_id = ? AND status = 'pending' ORDER BY id ASC LIMIT 20 FOR UPDATE");
+        $stmt->execute([$node['id']]);
+        $rows = $stmt->fetchAll();
+        if ($rows) {
+            $ids = array_map('intval', array_column($rows, 'id'));
+            $place = implode(',', array_fill(0, count($ids), '?'));
+            $upd = db()->prepare("UPDATE node_tasks SET status = 'sent' WHERE id IN ($place) AND status = 'pending'");
+            $upd->execute($ids);
+            foreach ($rows as $r) {
+                $payload = json_decode($r['payload'], true);
+                if (!is_array($payload)) {
+                    $payload = new stdClass();
+                }
+                $tasks[] = ['id' => (int) $r['id'], 'action' => $r['action'], 'payload' => $payload];
+            }
         }
-        $tasks[] = ['id' => (int) $r['id'], 'action' => $r['action'], 'payload' => $payload];
-        $ids[] = (int) $r['id'];
-    }
-    if ($ids) {
-        /* 标记为已下发，防止拉取与回报之间被重复取走 */
-        $place = implode(',', array_fill(0, count($ids), '?'));
-        db_exec("UPDATE node_tasks SET status = 'sent' WHERE id IN ($place) AND status = 'pending'", $ids);
+        db()->commit();
+    } catch (Throwable $e) {
+        if (db()->inTransaction()) {
+            db()->rollBack();
+        }
+        json_out(['ok' => false, 'msg' => 'sync failed'], 500);
     }
     json_out(['ok' => true, 'data' => ['tasks' => $tasks]]);
 }
@@ -232,18 +253,31 @@ function api_node_report(): void
         json_out(['ok' => false, 'msg' => 'auth failed'], 403);
     }
     $raw = file_get_contents('php://input');
-    $body = json_decode($raw, true);
-    if (!is_array($body)) {
-        json_out(['ok' => false, 'msg' => 'bad json'], 400);
+    if (strlen((string) $raw) > 2 * 1024 * 1024) {
+        json_out(['ok' => false, 'msg' => 'payload too large'], 413);
     }
     $nid = (int) $node['id'];
 
-    /* 任务结果 */
+    /* 请求体规模上限：任务 ≤40 条、traffic/states ≤600 条，防大 JSON 放大内存与 DB 写入 */
+    $body = json_decode((string) $raw, true);
+    if (!is_array($body)) {
+        json_out(['ok' => false, 'msg' => 'bad json'], 400);
+    }
+    if (isset($body['tasks']) && (!is_array($body['tasks']) || count($body['tasks']) > 40)) {
+        $body['tasks'] = [];
+    }
+    foreach (['traffic', 'states'] as $capKey) {
+        if (isset($body[$capKey]) && (!is_array($body[$capKey]) || count($body[$capKey]) > 600)) {
+            $body[$capKey] = [];
+        }
+    }
+
+    /* 任务结果（ok 必须为 JSON 布尔，字符串 "false"/1 等一律视为失败） */
     foreach (($body['tasks'] ?? []) as $t) {
-        if (!is_array($t) || !isset($t['id'])) {
+        if (!is_array($t) || !isset($t['id']) || !is_bool($t['ok'] ?? null)) {
             continue;
         }
-        $ok = !empty($t['ok']) ? 'done' : 'failed';
+        $ok = $t['ok'] ? 'done' : 'failed';
         $detail = mb_substr((string) ($t['detail'] ?? ''), 0, 180);
         $stmt = db()->prepare("UPDATE node_tasks SET status = ?, result_detail = ?, completed_at = NOW() WHERE id = ? AND node_id = ? AND status = 'sent'");
         $stmt->execute([$ok, $detail, (int) $t['id'], $nid]);
@@ -263,13 +297,21 @@ function api_node_report(): void
         }
     }
 
-    /* 流量（累计字节，上下行均计费） */
+    /* 流量（累计字节，上下行均计费）：只接受非负整数并做上限截断，防负数绕过配额 */
     foreach (($body['traffic'] ?? []) as $name => $t) {
         if (!is_array($t) || !preg_match('~^[a-z0-9][a-z0-9-]{2,20}$~', (string) $name)) {
             continue;
         }
-        $stmt = db()->prepare('UPDATE instances SET traffic_rx = ?, traffic_tx = ? WHERE name = ? AND node_id = ?');
-        $stmt->execute([(int) ($t['rx'] ?? 0), (int) ($t['tx'] ?? 0), $name, $nid]);
+        $rx = (int) ($t['rx'] ?? 0);
+        $tx = (int) ($t['tx'] ?? 0);
+        if ($rx < 0 || $tx < 0) {
+            continue;
+        }
+        $rx = min($rx, 10 * 1099511627776);
+        $tx = min($tx, 10 * 1099511627776);
+        /* 单调保护：上报值小于库中现值视为节点侧已重置周期，才允许回退 */
+        $stmt = db()->prepare('UPDATE instances SET traffic_rx = ?, traffic_tx = ? WHERE name = ? AND node_id = ? AND (traffic_rx <= ? OR traffic_tx <= ?)');
+        $stmt->execute([$rx, $tx, $name, $nid, $rx, $tx]);
     }
 
     /* 容器状态 */

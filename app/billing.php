@@ -56,14 +56,15 @@ function billing_cleanup_stuck_creating(): int
             }
             $o = db_one('SELECT id, amount FROM orders WHERE instance_id = ? AND status = ? ORDER BY id DESC LIMIT 1', [(int) $inst['id'], 'paid']);
             if ($o && (float) $o['amount'] > 0) {
-                billing_credit((int) $inst['uid'], (float) $o['amount'], 'refund', '实例 ' . $inst['name'] . ' 部署失败，自动退款');
+                billing_credit((int) $inst['uid'], (float) $o['amount'], 'refund', '实例 ' . $inst['name'] . ' 部署失败，自动退款', false);
                 $u = db()->prepare("UPDATE orders SET status = 'refunded' WHERE id = ?");
                 $u->execute([(int) $o['id']]);
             }
             if ((int) $inst['plan_id'] > 0) {
                 db_exec('UPDATE plans SET stock = stock + 1 WHERE id = ?', [(int) $inst['plan_id']]);
             }
-            $u2 = db()->prepare("UPDATE instances SET status = 'failed' WHERE id = ?");
+            /* 标记 released 而非 failed：failed 行会被分配器视为占用，造成 IP/端口槽位泄漏 */
+            $u2 = db()->prepare("UPDATE instances SET status = 'released', released_at = NOW() WHERE id = ? AND status = 'creating'");
             $u2->execute([(int) $inst['id']]);
             if ((int) $inst['node_id'] > 0) {
                 node_enqueue((int) $inst['node_id'], 'delete', ['name' => $inst['name'], 'ip_octet' => (int) $inst['ip_octet']]);
@@ -131,21 +132,41 @@ function billing_process_instance(array $inst): array
             return $result;
         }
         if ((float) $user['balance'] < $charge) {
-            /* 余额不足：欠费停机并记录扣费时刻 */
+            /* 余额不足：欠费停机并记录扣费时刻，同时下发节点停机（容器不再占用资源） */
             $upd = db()->prepare("UPDATE instances SET status = 'overdue', stopped_at = NOW(), last_billed_at = NOW() WHERE id = ? AND status = 'running'");
             $upd->execute([$inst['id']]);
+            if ((int) $inst['node_id'] > 0) {
+                node_enqueue((int) $inst['node_id'], 'stop', ['name' => $inst['name']]);
+            }
             $result['status'] = 'overdue';
             return $result;
         }
         db()->beginTransaction();
         try {
+            /* 锁实例行并重读计费起点：防止 cron 与 Web 懒计费并发重复扣费 */
+            $lstmt = db()->prepare("SELECT last_billed_at FROM instances WHERE id = ? AND status = 'running' FOR UPDATE");
+            $lstmt->execute([$inst['id']]);
+            $freshLast = $lstmt->fetchColumn();
+            if ($freshLast === false) {
+                throw new RuntimeException('instance state race');
+            }
+            $hours = (int) floor(($now - strtotime((string) $freshLast)) / 3600);
+            if ($hours < 1) {
+                db()->rollBack();
+                return $result;
+            }
+            $charge = round($hours * $price, 2);
             $upd = db()->prepare("UPDATE users SET balance = balance - ? WHERE id = ? AND balance >= ?");
             $upd->execute([$charge, $uid, $charge]);
             if ($upd->rowCount() !== 1) {
                 throw new RuntimeException('balance race');
             }
-            $upd = db()->prepare("UPDATE instances SET last_billed_at = DATE_ADD(last_billed_at, INTERVAL ? HOUR) WHERE id = ?");
-            $upd->execute([$hours, $inst['id']]);
+            /* CAS：仅当 last_billed_at 仍为锁内读到的值时推进，杜绝并发双扣 */
+            $upd = db()->prepare("UPDATE instances SET last_billed_at = DATE_ADD(last_billed_at, INTERVAL ? HOUR) WHERE id = ? AND last_billed_at = ?");
+            $upd->execute([$hours, $inst['id'], $freshLast]);
+            if ($upd->rowCount() !== 1) {
+                throw new RuntimeException('billing race');
+            }
             $ins = db()->prepare("INSERT INTO transactions (uid, type, amount, balance_after, remark, created_at) SELECT ?, 'hourly', ?, users.balance, ?, NOW() FROM users WHERE users.id = ?");
             $ins->execute([$uid, -$charge, sprintf('实例 %s 按量扣费 %s 小时', $inst['name'], $hours), $uid]);
             db()->commit();
@@ -278,19 +299,29 @@ function billing_spec_text(array $inst): string
     return (int) $inst['cpu'] . '核 / ' . $ram . ' 内存 / ' . (int) $inst['disk_gb'] . 'G 硬盘';
 }
 
-function billing_release_instance(array $inst): void
+function billing_release_instance(array $inst): bool
 {
+    /* 幂等释放：仅首次从非 released 状态转移时回补库存，防止并发/重放导致库存虚高 */
     try {
-        $upd = db()->prepare("UPDATE instances SET status = 'released', released_at = NOW(), vnc_token = '', vnc_expire_at = NULL WHERE id = ?");
-        $upd->execute([$inst['id']]);
+        $upd = db()->prepare("UPDATE instances SET status = 'released', released_at = NOW(), vnc_token = '', vnc_expire_at = NULL WHERE id = ? AND status <> 'released'");
     } catch (Throwable $e) {
         /* vnc 列尚未创建（首次部署）：只更新基础字段 */
-        $upd = db()->prepare("UPDATE instances SET status = 'released', released_at = NOW() WHERE id = ?");
-        $upd->execute([$inst['id']]);
+        $upd = db()->prepare("UPDATE instances SET status = 'released', released_at = NOW() WHERE id = ? AND status <> 'released'");
+    }
+    $upd->execute([$inst['id']]);
+    if ($upd->rowCount() !== 1) {
+        return false;
     }
     if ((int) $inst['plan_id'] > 0) {
         db_exec('UPDATE plans SET stock = stock + 1 WHERE id = ?', [(int) $inst['plan_id']]);
     }
+    /* 清理该实例的自定义 NAT 规则记录（节点侧 DNAT 由 delete 任务的 del_nat_rules 统一回收） */
+    try {
+        db_exec('DELETE FROM nc_nat_rules WHERE instance_id = ?', [(int) $inst['id']]);
+    } catch (Throwable $e) {
+        /* 表尚未创建 */
+    }
+    return true;
 }
 
 /**
@@ -420,17 +451,20 @@ function node_enqueue(int $nodeId, string $action, array $payload): int
 
 /**
  * 为节点分配内网尾号(2-254)与端口段：在节点端口范围内找第一个未占用块。
+ * $count 为端口段宽度（必须传套餐实际 port_count，不能用全局配置，否则会产生跨租户端口重叠）。
  * 返回 ['octet'=>n, 'port_base'=>n] 或 null（容量满）。
+ * 注意：分配须在数据库事务内调用（调用方先锁节点行），保证并发开通不撞车。
  */
-function node_allocate_slot(int $nodeId): ?array
+function node_allocate_slot(int $nodeId, ?int $count = null): ?array
 {
-    $node = db_one('SELECT port_start, port_end FROM nodes WHERE id = ? AND status = 1', [$nodeId]);
+    $node = db_one('SELECT port_start, port_end, max_instances FROM nodes WHERE id = ? AND status = 1', [$nodeId]);
     if (!$node) {
         return null;
     }
     $start = (int) $node['port_start'];
     $end = (int) $node['port_end'];
-    $stmt = db()->prepare("SELECT ip_octet, nat_ports FROM instances WHERE node_id = ? AND status != 'released'");
+    $count = $count !== null && $count >= 1 ? min(64, $count) : (int) setting('ports_per_instance', '15');
+    $stmt = db()->prepare("SELECT ip_octet, nat_ports FROM instances WHERE node_id = ? AND status NOT IN ('released','failed')");
     $stmt->execute([$nodeId]);
     $usedOctets = [];
     $usedBlocks = [];
@@ -442,6 +476,11 @@ function node_allocate_slot(int $nodeId): ?array
             $usedBlocks[] = [(int) $m[1], (int) $m[2]];
         }
     }
+    /* 节点容量上限：有效实例数（含 creating）不得超过 max_instances */
+    $maxInst = (int) ($node['max_instances'] ?? 0);
+    if ($maxInst > 0 && count($usedOctets) >= $maxInst) {
+        return null;
+    }
     $octet = null;
     for ($i = 2; $i <= 254; $i++) {
         if (!isset($usedOctets[$i])) {
@@ -452,7 +491,6 @@ function node_allocate_slot(int $nodeId): ?array
     if ($octet === null) {
         return null;
     }
-    $count = (int) setting('ports_per_instance', '15');
     for ($base = $start; $base + $count - 1 <= $end; $base += $count) {
         $free = true;
         foreach ($usedBlocks as $b) {
@@ -487,11 +525,9 @@ function billing_create_node_instance(array $user, array $plan, string $img, str
     if (!in_array($img, (array) $images, true)) {
         return ['ok' => false, 'msg' => '所选系统不在该套餐支持范围内。'];
     }
-    $slot = node_allocate_slot((int) $node['id']);
-    if (!$slot) {
-        return ['ok' => false, 'msg' => '节点资源已耗尽，请联系管理员。'];
+    if (!in_array($cycle, ['monthly', 'quarterly', 'semiannually', 'annually'], true)) {
+        $cycle = 'monthly';
     }
-
     $name = 'v' . substr(bin2hex(random_bytes(5)), 0, 9);
     $rootpw = bin2hex(random_bytes(6));
     $hourly = (float) $plan['hourly_price'];
@@ -502,10 +538,23 @@ function billing_create_node_instance(array $user, array $plan, string $img, str
         return ['ok' => false, 'msg' => '该套餐不支持按小时计费，请选择包年包月。'];
     }
     $months = billing_cycle_months($cycle);
-    $cycleKey = array_search($months, [1 => 'monthly', 3 => 'quarterly', 6 => 'semiannually', 12 => 'annually'], true) ?: 'monthly';
+    $cycleKey = $cycle;
 
     db()->beginTransaction();
     try {
+        /* 锁节点行：串行化同一节点的资源分配，避免并发开通分到相同 IP 尾号/端口段 */
+        $nlock = db()->prepare('SELECT id FROM nodes WHERE id = ? FOR UPDATE');
+        $nlock->execute([(int) $node['id']]);
+        if (!$nlock->fetch()) {
+            throw new RuntimeException('节点不可用');
+        }
+        /* 分配必须在事务内进行：端口段宽度用套餐实际 port_count，而非全局配置 */
+        $slot = node_allocate_slot((int) $node['id'], (int) $plan['port_count']);
+        if (!$slot) {
+            db()->rollBack();
+            return ['ok' => false, 'msg' => '节点资源已耗尽，请联系管理员。'];
+        }
+
         $stmt = db()->prepare('SELECT id, balance FROM users WHERE id = ? FOR UPDATE');
         $stmt->execute([$uid]);
         $fresh = $stmt->fetch();
@@ -674,6 +723,14 @@ function billing_renew_instance(array $user, array $inst, string $cycle = 'month
 
     db()->beginTransaction();
     try {
+        /* 锁实例行并重读状态/到期时间：防止 cron 自动续费与用户续费并发双扣、以及“释放后复活” */
+        $lstmt = db()->prepare('SELECT status, expire_at FROM instances WHERE id = ? FOR UPDATE');
+        $lstmt->execute([$inst['id']]);
+        $freshInst = $lstmt->fetch();
+        if (!$freshInst || $freshInst['status'] === 'released') {
+            db()->rollBack();
+            return ['ok' => false, 'msg' => '实例已释放，无法续费。'];
+        }
         $stmt = db()->prepare('SELECT balance FROM users WHERE id = ? FOR UPDATE');
         $stmt->execute([$uid]);
         $balance = (float) $stmt->fetchColumn();
@@ -687,10 +744,14 @@ function billing_renew_instance(array $user, array $inst, string $cycle = 'month
         $stmt->execute([$uid]);
         $after = (float) $stmt->fetchColumn();
 
-        $base = $inst['expire_at'] && strtotime((string) $inst['expire_at']) > time() ? strtotime((string) $inst['expire_at']) : time();
+        $base = $freshInst['expire_at'] && strtotime((string) $freshInst['expire_at']) > time() ? strtotime((string) $freshInst['expire_at']) : time();
         $newExpire = date('Y-m-d H:i:s', strtotime('+' . $months . ' months', $base));
-        $upd = db()->prepare("UPDATE instances SET expire_at = ?, status = 'running', stopped_at = NULL, cycle = ?, remind_level = 0 WHERE id = ?");
+        $upd = db()->prepare("UPDATE instances SET expire_at = ?, status = 'running', stopped_at = NULL, cycle = ?, remind_level = 0 WHERE id = ? AND status <> 'released'");
         $upd->execute([$newExpire, $cycle, $inst['id']]);
+        if ($upd->rowCount() !== 1) {
+            throw new RuntimeException('instance state race');
+        }
+        $inst['status'] = $freshInst['status'];
         node_lifecycle_on_renew($inst);
 
         $orderTitle = sprintf('实例 %s 续费 %d 个月', $inst['name'], $months);
@@ -805,9 +866,20 @@ function billing_send_expiry_reminders(): int
 
 /**
  * 钱包入账（充值确认 / 管理员调整），写流水。
+ * $ownTxn=false 时在外层事务内执行（如清理卡死实例的退款路径），避免嵌套 beginTransaction 必然抛异常。
  */
-function billing_credit(int $uid, float $amount, string $type, string $remark): void
+function billing_credit(int $uid, float $amount, string $type, string $remark, bool $ownTxn = true): void
 {
+    if (!$ownTxn) {
+        $upd = db()->prepare('UPDATE users SET balance = balance + ? WHERE id = ?');
+        $upd->execute([$amount, $uid]);
+        $stmt = db()->prepare('SELECT balance FROM users WHERE id = ?');
+        $stmt->execute([$uid]);
+        $after = (float) $stmt->fetchColumn();
+        $ins = db()->prepare('INSERT INTO transactions (uid, type, amount, balance_after, remark, created_at) VALUES (?, ?, ?, ?, ?, NOW())');
+        $ins->execute([$uid, $type, $amount, $after, $remark]);
+        return;
+    }
     db()->beginTransaction();
     try {
         $upd = db()->prepare('UPDATE users SET balance = balance + ? WHERE id = ?');
@@ -855,6 +927,9 @@ function billing_instance_rebuild(array $inst, string $img): array
 {
     if ((int) $inst['node_id'] <= 0) {
         return ['ok' => false, 'msg' => '本机模拟实例无需重装。'];
+    }
+    if (in_array((string) $inst['status'], ['released', 'creating', 'failed'], true)) {
+        return ['ok' => false, 'msg' => '当前状态（' . $inst['status'] . '）不允许重装系统。'];
     }
     if (!preg_match('~^[a-z0-9][a-z0-9-]{0,31}$~', $img)) {
         return ['ok' => false, 'msg' => '镜像名不合法。'];

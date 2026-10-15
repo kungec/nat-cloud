@@ -31,6 +31,8 @@ function page_static_handle(string $path): void
     if ($path === '/terms' || $path === '/privacy') {
         $isTerms = $path === '/terms';
         $html = setting($isTerms ? 'tos_html' : 'privacy_html', '');
+        /* 管理员可编辑 HTML 属于不可信输入（会话被盗/CSRF 即成存储型 XSS），输出前白名单清洗 */
+        $html = html_sanitize_basic($html);
         $title = $isTerms ? '服务条款' : '隐私政策';
         respond(view('page_html', ['title' => $title . ' · ' . setting('site_name', 'NAT Cloud'), 'pageTitle' => $title, 'html' => $html]));
     }

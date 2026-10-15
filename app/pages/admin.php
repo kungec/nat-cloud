@@ -340,13 +340,19 @@ function admin_handle(string $path, string $method): void
         if (!$u) {
             respond(view('errors/404', ['title' => '用户不存在']), 404);
         }
-        /* 名下实例：节点实例入队销毁，本地实例直接删 */
+        /* 名下实例：统一走释放流程（幂等回收库存/规则），节点实例再入队销毁，最后删记录 */
         $stmt = db()->prepare('SELECT * FROM instances WHERE uid = ?');
         $stmt->execute([$target]);
         foreach ($stmt->fetchAll() as $inst) {
             if ((int) $inst['node_id'] > 0 && $inst['status'] !== 'released') {
                 node_lifecycle_on_delete($inst);
             }
+            billing_release_instance($inst);
+        }
+        try {
+            db_exec('DELETE FROM nc_nat_rules WHERE instance_id IN (SELECT id FROM instances WHERE uid = ?)', [$target]);
+        } catch (Throwable $e) {
+            /* 表不存在 */
         }
         db_exec('DELETE FROM instances WHERE uid = ?', [$target]);
         db_exec('DELETE FROM ticket_replies WHERE ticket_id IN (SELECT id FROM tickets WHERE uid = ?)', [$target]);
@@ -517,9 +523,15 @@ function admin_handle(string $path, string $method): void
         if (!$inst) {
             respond(view('errors/404', ['title' => '实例不存在']), 404);
         }
-        /* 节点实例先入队销毁容器，再删除记录 */
+        /* 节点实例先入队销毁容器；释放流程幂等回收库存与 NAT 规则后，再删除记录 */
         if ((int) $inst['node_id'] > 0 && $inst['status'] !== 'released') {
             node_lifecycle_on_delete($inst);
+        }
+        billing_release_instance($inst);
+        try {
+            db_exec('DELETE FROM nc_nat_rules WHERE instance_id = ?', [(int) $inst['id']]);
+        } catch (Throwable $e) {
+            /* 表不存在 */
         }
         $del = db()->prepare('DELETE FROM instances WHERE id = ?');
         $del->execute([$inst['id']]);
@@ -691,6 +703,15 @@ function admin_handle(string $path, string $method): void
             (int) $m[1],
         ]);
         flash('ok', '节点已更新。');
+        $nodesView();
+    }
+    /* 重置节点通信密钥：旧密钥立即失效（吊销泄露/停用后的旧凭据），须重新执行安装命令 */
+    if (preg_match('~^/admin/nodes/(\d+)/rekey$~', $path, $m) && $method === 'POST') {
+        csrf_check();
+        $newKey = bin2hex(random_bytes(24));
+        $upd = db()->prepare('UPDATE nodes SET node_key = ? WHERE id = ?');
+        $upd->execute([$newKey, (int) $m[1]]);
+        flash('ok', '节点通信密钥已重置。旧密钥已失效，请在该节点上重新执行新的安装命令完成换钥。');
         $nodesView();
     }
     if (preg_match('~^/admin/nodes/(\d+)/delete$~', $path, $m) && $method === 'POST') {
@@ -1262,7 +1283,7 @@ function admin_handle(string $path, string $method): void
             'wx_private_key' => trim(post_str('wx_private_key', 6000)) !== '' ? secret_encrypt(trim(post_str('wx_private_key', 6000))) : trim(setting('wx_private_key', '')),
             'wx_public_key' => trim(post_str('wx_public_key', 5000)),
             'kyc_global_required' => post_str('kyc_global_required') === '1' ? '1' : '0',
-            'kyc_provider' => in_array(($kpTmp = post_str('kyc_provider', 20)), ['', 'jidian', 'alipay', 'wx', 'zhijian'], true) ? $kpTmp : '',
+            'kyc_provider' => in_array(($kpTmp = post_str('kyc_provider', 20)), ['', 'jidian'], true) ? $kpTmp : '',
             'jidian_app_id' => trim(post_str('jidian_app_id', 64)),
             'jidian_app_key' => trim(post_str('jidian_app_key', 64)),
             'kyc_relay_ip' => trim(post_str('kyc_relay_ip', 45)),
