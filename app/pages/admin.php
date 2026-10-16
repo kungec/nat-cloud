@@ -154,6 +154,70 @@ function admin_handle(string $path, string $method): void
         json_out($dashOrdersFragment(max(1, (int) query_str('page', 1))));
     }
 
+    /* ---------- 系统更新（GitHub 一键同步） ---------- */
+    $updateView = function () {
+        $cur = updater_current_version();
+        $remote = null;
+        $commits = [];
+        $checkErr = '';
+        try {
+            $remote = updater_latest_commit();
+            $commits = updater_recent_commits();
+        } catch (Throwable $e) {
+            $checkErr = $e->getMessage();
+        }
+        respond(view('admin/update', [
+            'title' => '系统更新',
+            'cur' => $cur,
+            'remote' => $remote,
+            'commits' => $commits,
+            'checkErr' => $checkErr,
+            'hasUpdate' => $remote !== null && updater_has_update($cur, $remote),
+            'proxy' => updater_proxy_prefix(),
+        ]));
+    };
+    if ($path === '/admin/system/update' && $method === 'GET') {
+        $updateView();
+    }
+    if ($path === '/admin/system/update/check' && $method === 'POST') {
+        csrf_check();
+        setting_save('update_check_ts', '0');
+        try {
+            $r = updater_latest_commit(true);
+            flash('ok', '已刷新：GitHub 最新提交 ' . $r['short'] . '（' . $r['message'] . '）');
+        } catch (Throwable $e) {
+            flash('err', '检查失败：' . $e->getMessage());
+        }
+        $updateView();
+    }
+    if ($path === '/admin/system/update/apply' && $method === 'POST') {
+        csrf_check();
+        try {
+            $remote = updater_latest_commit(true);
+        } catch (Throwable $e) {
+            flash('err', '无法获取最新版本信息：' . $e->getMessage());
+            $updateView();
+        }
+        try {
+            $r = updater_apply((string) $remote['sha'], (string) $remote['time']);
+            flash('ok', '更新完成：已换入 ' . implode(' / ', $r['entries']) . '（程序文件 ' . $r['files'] . ' 个）。旧版本已完整备份到 ' . $r['backup'] . '/，如遇异常可用它恢复。');
+        } catch (Throwable $e) {
+            flash('err', '更新失败：' . $e->getMessage() . '（已完成的条目备份在 storage/ 下，可手动恢复）');
+        }
+        $updateView();
+    }
+    if ($path === '/admin/system/update/proxy' && $method === 'POST') {
+        csrf_check();
+        $p = rtrim(trim(post_str('proxy', 200)), '/');
+        if ($p !== '' && updater_proxy_prefix() === '') {
+            flash('err', '加速前缀格式不正确：需为 http(s)://公网域名 形式。');
+        } else {
+            setting_save('update_github_proxy', $p);
+            flash('ok', $p === '' ? '已清除加速前缀，更新直连 GitHub 官方源。' : '加速前缀已保存：' . $p);
+        }
+        $updateView();
+    }
+
     /* ---------- 管理员账号设置（用户名与密码一次保存） ---------- */
     if ($path === '/admin/profile' && $method === 'GET') {
         respond(view('admin/profile', ['title' => '账号设置', 'adminName' => $admin['username']]));

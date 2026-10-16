@@ -37,6 +37,7 @@
     <a class="<?= strpos($cur, '/admin/coupons') === 0 ? 'on' : '' ?>" href="/admin/coupons">优惠码</a>
     <a class="<?= strpos($cur, '/admin/kyc') === 0 ? ' on' : '' ?>" href="/admin/kyc">实名审核</a>
     <a class="<?= strpos($cur, '/admin/settings') === 0 ? ' on' : '' ?>" href="/admin/settings">系统设置</a>
+    <a class="<?= strpos($cur, '/admin/system/update') === 0 ? ' on' : '' ?>" href="/admin/system/update">系统更新</a>
   </div>
 </nav>
 <div class="shell">
@@ -54,6 +55,7 @@
       <a class="<?= strpos($cur, '/admin/coupons') === 0 ? 'on' : '' ?>" href="/admin/coupons"><span class="ico"><?= nc_icon('receipt') ?></span>优惠码</a>
       <a class="<?= strpos($cur, '/admin/kyc') === 0 ? ' on' : '' ?>" href="/admin/kyc"><span class="ico"><?= nc_icon('shield') ?></span>实名审核</a>
       <a class="<?= strpos($cur, '/admin/settings') === 0 ? ' on' : '' ?>" href="/admin/settings"><span class="ico"><?= nc_icon('gear') ?></span>系统设置</a>
+      <a class="<?= strpos($cur, '/admin/system/update') === 0 ? ' on' : '' ?>" href="/admin/system/update"><span class="ico"><?= nc_icon('zap') ?></span>系统更新</a>
     </nav>
   </aside>
   <main class="main">
