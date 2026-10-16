@@ -132,10 +132,11 @@ function billing_process_instance(array $inst): array
             return $result;
         }
         if ((float) $user['balance'] < $charge) {
-            /* 余额不足：欠费停机并记录扣费时刻，同时下发节点停机（容器不再占用资源） */
+            /* 余额不足：欠费停机并记录扣费时刻，同时下发节点停机（容器不再占用资源）；
+               仅在本次成功转移到 overdue 时下发，防止并发重复入队 */
             $upd = db()->prepare("UPDATE instances SET status = 'overdue', stopped_at = NOW(), last_billed_at = NOW() WHERE id = ? AND status = 'running'");
             $upd->execute([$inst['id']]);
-            if ((int) $inst['node_id'] > 0) {
+            if ($upd->rowCount() === 1 && (int) $inst['node_id'] > 0) {
                 node_enqueue((int) $inst['node_id'], 'stop', ['name' => $inst['name']]);
             }
             $result['status'] = 'overdue';
@@ -194,7 +195,10 @@ function billing_process_instance(array $inst): array
         }
         $upd = db()->prepare("UPDATE instances SET status = 'overdue', stopped_at = NOW() WHERE id = ? AND status = 'running'");
         $upd->execute([$inst['id']]);
-        node_lifecycle_on_expire($inst);
+        /* 仅在本次成功转移到 overdue 时下发停机，防止并发重复入队 */
+        if ($upd->rowCount() === 1) {
+            node_lifecycle_on_expire($inst);
+        }
         $result['status'] = 'overdue';
         $inst['status'] = 'overdue';
         $inst['stopped_at'] = date('Y-m-d H:i:s');
