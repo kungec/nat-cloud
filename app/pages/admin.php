@@ -115,7 +115,7 @@ function admin_handle(string $path, string $method): void
             flash('err', '请输入账号和密码。');
             respond(view('admin/login', ['title' => '管理员登录', 'old' => $old]), 422);
         }
-        if (auth_recent_failures('admin:' . $account, client_ip()) >= 8) {
+        if (auth_failure_count('account', 'admin:' . $account) >= 10 || auth_failure_count('ip', client_ip()) >= 20) {
             flash('err', '失败次数过多，请 10 分钟后再试。');
             respond(view('admin/login', ['title' => '管理员登录', 'old' => $old]), 429);
         }
