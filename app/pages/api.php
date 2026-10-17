@@ -349,6 +349,14 @@ function api_node_report(): void
 
     /* 心跳时间与资源指标（状态页/管理后台在线判定与展示用） */
     $metrics = is_array($body['metrics'] ?? null) ? $body['metrics'] : null;
+    /* 节点程序自更新版本回报：合入 metrics_json 存储，后台节点卡展示 */
+    $ver = is_string($body['version'] ?? null) ? (string) $body['version'] : '';
+    if (preg_match('~^[a-zA-Z0-9.\-]{1,24}$~', $ver)) {
+        if (!is_array($metrics)) {
+            $metrics = [];
+        }
+        $metrics['agent_version'] = $ver;
+    }
     $metricsJson = $metrics ? json_encode($metrics, JSON_UNESCAPED_UNICODE) : null;
     try {
         $stmt = db()->prepare('UPDATE nodes SET last_seen = NOW(), metrics_json = ? WHERE id = ?');

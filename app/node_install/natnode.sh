@@ -9,7 +9,8 @@
 #   * 节点不开任何入站管理端口，一切管理经由网站管理后台
 #     （管理员登录）+ 每节点独立密钥（X-Node-Key）完成。
 #
-# 支持动作：create / start / stop / restart / rebuild / delete / nat / console / password / traffic_reset
+# 支持动作：create / start / stop / restart / rebuild / delete / nat / console / password / traffic_reset / selfupdate
+# 自更新：sync 每日至多检查一次 GitHub 主分支（失败回落站点 node_agent），也可手动执行 natnode.sh selfupdate
 # ============================================================
 set -u
 umask 077
@@ -22,10 +23,15 @@ MNT=$BASE/mnt
 LXC=/var/lib/lxc
 
 [ -f "$CONF" ] || { echo "natnode: 缺少 $CONF" >&2; exit 1; }
-# CONF 内容: SITE_URL=  NODE_KEY=  PUB_IP=  NET_PREFIX=  PORT_GRACE_DAYS=
+# CONF 内容: SITE_URL=  NODE_KEY=  PUB_IP=  NET_PREFIX=  PORT_GRACE_DAYS=  GH_PROXY=(可选下载加速前缀)
 . "$CONF"
 : "${NET_PREFIX:=10.0.3}"
 : "${PORT_GRACE_DAYS:=3}"
+: "${GH_PROXY:=}"
+
+# 节点程序版本（自更新比对用；改动脚本功能时必须同步递增）
+NATNODE_VERSION="20261017a"
+GH_RAW="https://raw.githubusercontent.com/kungec/nat-cloud/main/app/node_install/natnode.sh"
 
 mkdir -p "$STATE" "$MNT" "$LXC"
 : > "$BASE/empty"
@@ -236,6 +242,44 @@ t_traffic_reset() {
   done
   return 0
 }
+
+# ---------- 自更新（GitHub 主分支优先，站点 node_agent 回落） ----------
+cmd_selfupdate() { # 可选参数：--force 跳过版本比对强制重装
+  local tmp="/tmp/natnode.sh.cand" ok="" newver
+  local url="$GH_RAW"
+  [ -n "$GH_PROXY" ] && url="${GH_PROXY%/}/$GH_RAW"
+  curl -fsSL -m 60 "$url" -o "$tmp" 2>/dev/null && ok="github"
+  if [ -z "$ok" ]; then
+    curl -fsSL -m 60 -H "X-Node-Key: $NODE_KEY" "$SITE_URL/api/api.php?f=node_agent&key=$NODE_KEY" -o "$tmp" 2>/dev/null && ok="site"
+  fi
+  if [ -z "$ok" ]; then log "selfupdate: 下载失败（GitHub 与站点源均不可达）"; rm -f "$tmp"; return 1; fi
+  bash -n "$tmp" 2>/dev/null || { log "selfupdate: 候选脚本语法校验失败"; rm -f "$tmp"; return 1; }
+  grep -q '^NATNODE_VERSION=' "$tmp" || { log "selfupdate: 候选缺少版本标记，弃用"; rm -f "$tmp"; return 1; }
+  newver=$(grep -m1 '^NATNODE_VERSION=' "$tmp" | cut -d'"' -f2)
+  case "$newver" in ''|*[!a-zA-Z0-9.]*) log "selfupdate: 候选版本号异常"; rm -f "$tmp"; return 1;; esac
+  if [ "$newver" = "$NATNODE_VERSION" ] && [ "${1:-}" != "--force" ]; then
+    log "selfupdate: 已是最新 $NATNODE_VERSION"
+    rm -f "$tmp"
+    return 0
+  fi
+  chmod 700 "$tmp"
+  cp -a natnode.sh "natnode.sh.bak.selfup" 2>/dev/null || true
+  mv -f "$tmp" /opt/natnode/natnode.sh
+  log "selfupdate: $NATNODE_VERSION -> $newver（来源 $ok），旧版备份 natnode.sh.bak.selfup"
+  echo "selfupdate: $NATNODE_VERSION -> $newver (source=$ok)"
+  return 0
+}
+
+# 每日至多检查一次（state 文件节流），由 sync 末尾调用
+maybe_selfupdate() {
+  local stamp="$STATE/last.selfupdate" now last=0
+  now=$(date +%s)
+  [ -f "$stamp" ] && last=$(cat "$stamp" 2>/dev/null)
+  case "$last" in ''|*[!0-9]*) last=0;; esac
+  [ $((now - last)) -lt 86400 ] && return 0
+  echo "$now" > "$stamp"
+  cmd_selfupdate || true
+}
 t_rebuild() { # 参数同 create
   local name="$1"; shift
   valid_name "$name" || return 1
@@ -426,14 +470,16 @@ cmd_sync() {
   done < <(echo "$resp" | jq -r '.data.tasks[]?.id')
 
   local body
-  body=$(jq -cn --argjson tasks "$results" --argjson stats "$(traffic_json)" --argjson states "$(states_json)" --argjson images "$(images_json)" --argjson metrics "$(metrics_json)" '{tasks:$tasks, traffic:$stats, states:$states, images:$images, metrics:$metrics}')
+  body=$(jq -cn --argjson tasks "$results" --argjson stats "$(traffic_json)" --argjson states "$(states_json)" --argjson images "$(images_json)" --argjson metrics "$(metrics_json)" --arg ver "${NATNODE_VERSION:-}" '{tasks:$tasks, traffic:$stats, states:$states, images:$images, metrics:$metrics, version:$ver}')
   local rp
   rp=$(api_post node_report "$body")
   log "sync 完成：任务 $(echo "$results" | jq 'length') 个，回报 $(echo "$rp" | head -c 80)"
+  maybe_selfupdate
 }
 
 case "${1:-help}" in
   sync)   cmd_sync ;;
+  selfupdate) shift; cmd_selfupdate "${1:-}" ;;
   password) shift; t_password "$1" "$2" ;;
   console) shift; t_console "$1" "$2" "$3" "$4" ;;
   nat) shift; t_nat "$1" "$2" "$3" "$4" "$5" ;;

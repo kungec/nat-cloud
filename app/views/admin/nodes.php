@@ -37,6 +37,9 @@
         <?php $dt = (int) ($m['disk_total_gb'] ?? 0); $du = (int) ($m['disk_used_gb'] ?? 0); ?>
         <span class="k">磁盘</span><span class="mono"><?= $dt > 0 ? $du . ' / ' . $dt . ' GB' : '—' ?></span>
         <span class="k">运行容器</span><span class="mono"><?= (int) ($m['containers_running'] ?? 0) ?></span>
+        <?php if (!empty($m['agent_version'])): ?>
+        <span class="k">节点程序</span><span class="mono"><?= e((string) $m['agent_version']) ?></span>
+        <?php endif; ?>
         <?php endif; ?>
       </div>
       <?php if ((string) $n['remark'] !== ''): ?><div class="pcard-cycles"><?= e($n['remark']) ?></div><?php endif; ?>
