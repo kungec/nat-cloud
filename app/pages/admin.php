@@ -697,7 +697,7 @@ function admin_handle(string $path, string $method): void
             'page' => $page, 'pages' => $pages, 'total' => $total,
         ]));
     }
-    $nodesView = function (int $status = 200) {
+    $nodesView = function (int $status = 200) use ($nodesEnsureSort) {
         $nodesEnsureSort();
         $total = (int) db_val('SELECT COUNT(*) FROM nodes');
         $pages = max(1, (int) ceil($total / 12));
@@ -746,6 +746,7 @@ function admin_handle(string $path, string $method): void
             max(1, post_int('max_instances', 500)),
             post_int('status', 1) === 0 ? 0 : 1,
             post_str('remark', 190),
+            $maxSort + 1,
         ]);
         flash('ok', '节点已添加。节点密钥（请配置到节点机 natnode.conf 的 NODE_KEY）：' . $key);
         $nodesView();
